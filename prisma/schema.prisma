@@ -1,0 +1,162 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum OrderStatus {
+  NEW
+  QUALIFIED
+  QUOTE_CREATED
+  PAYMENT_REQUESTED
+  PARTIALLY_PAID
+  PAID
+  FULFILLED
+}
+
+enum MessageRole {
+  CUSTOMER
+  MERCHANT
+  AGENT
+}
+
+enum PaymentStatus {
+  CREATED
+  PENDING
+  PAID
+  FAILED
+  CANCELLED
+}
+
+model Merchant {
+  id             String           @id @default(cuid())
+  name           String
+  tradeName      String
+  createdAt      DateTime         @default(now())
+  policy         MerchantPolicy?
+  conversations  Conversation[]
+}
+
+model MerchantPolicy {
+  id                          String   @id @default(cuid())
+  merchantId                  String   @unique
+  merchant                    Merchant @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  minimumAdvancePercentage    Int      @default(25)
+  maximumDiscountPercentage   Int      @default(5)
+  allowPartialPayment         Boolean  @default(true)
+  allowCredit                 Boolean  @default(false)
+  newCustomerRequiresAdvance  Boolean  @default(true)
+  updatedAt                   DateTime @updatedAt
+}
+
+model Customer {
+  id                  String         @id @default(cuid())
+  name                String
+  company             String?
+  phone               String?
+  isNew               Boolean        @default(false)
+  previousOrderCount  Int            @default(0)
+  onTimePaymentRate   Int            @default(100)
+  lastUnitPrice       Int?
+  conversations       Conversation[]
+}
+
+model Conversation {
+  id            String          @id
+  merchantId    String
+  merchant      Merchant        @relation(fields: [merchantId], references: [id], onDelete: Cascade)
+  customerId    String
+  customer      Customer        @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  title         String
+  caseType      String
+  preview       String
+  lastMessageAt DateTime
+  unread        Boolean         @default(false)
+  messages      Message[]
+  order         Order?
+  activities    ActivityEvent[]
+}
+
+model Message {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  role           MessageRole
+  body           String
+  sentAt         DateTime
+
+  @@index([conversationId, sentAt])
+}
+
+model Order {
+  id                            String             @id @default(cuid())
+  conversationId                String             @unique
+  conversation                  Conversation       @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  status                        OrderStatus        @default(NEW)
+  intent                        String
+  products                      String             @default("[]")
+  quantity                      Int
+  unitPrice                     Int
+  totalAmount                   Int
+  requestedAdvancePercentage    Int?
+  recommendedAdvancePercentage  Int?
+  recommendedAdvanceAmount      Int?
+  remainingAmount               Int?
+  requestedDiscountPercentage   Int?
+  requestedCredit               Boolean            @default(false)
+  deliveryDate                  String?
+  reason                        String?
+  nextAction                    String?
+  customerRequestSummary        String?
+  payments                      Payment[]
+  statusHistory                 OrderStatusEvent[]
+  createdAt                     DateTime           @default(now())
+  updatedAt                     DateTime           @updatedAt
+}
+
+model OrderStatusEvent {
+  id         String       @id @default(cuid())
+  orderId    String
+  order      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  fromStatus OrderStatus?
+  toStatus   OrderStatus
+  reason     String
+  recordedAt DateTime     @default(now())
+}
+
+model Payment {
+  id                     String        @id @default(cuid())
+  orderId                String
+  order                  Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  amount                 Int
+  status                 PaymentStatus @default(CREATED)
+  razorpayPaymentLinkId  String?
+  razorpayPaymentLinkUrl String?
+  razorpayPaymentId      String?
+  createdAt              DateTime      @default(now())
+  paidAt                 DateTime?
+}
+
+model ActivityEvent {
+  id             String       @id @default(cuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  occurredAt     DateTime
+  type           String
+  title          String
+  detail         String?
+
+  @@index([conversationId, occurredAt])
+}
+
+model AgentActionLog {
+  id         String   @id @default(cuid())
+  action     String
+  payload    String
+  result     String?
+  success    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+}
