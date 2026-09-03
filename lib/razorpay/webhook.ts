@@ -1,6 +1,7 @@
 import { OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { canTransition } from "@/lib/orders/state";
+import { syncCustomerMetrics } from "@/lib/policies/customer";
 
 export type PaymentWebhookPayload = {
   paymentLinkId?: string | null;
@@ -391,6 +392,13 @@ export async function processPaymentCapture(payload: PaymentWebhookPayload) {
         createdAt: new Date(),
       },
     });
+
+    // Sync customer metrics in background
+    if (order.conversation?.customerId) {
+      await syncCustomerMetrics(order.conversation.customerId).catch((err) =>
+        console.warn("Failed to sync customer metrics:", err),
+      );
+    }
 
     return {
       orderId: order.id,

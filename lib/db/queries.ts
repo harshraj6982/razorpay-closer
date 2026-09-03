@@ -1,4 +1,5 @@
-import { evaluatePaymentStrategy } from "@/lib/policies/engine";
+import { evaluatePolicy } from "@/lib/policies/engine";
+import { calculateCustomerRisk } from "@/lib/policies/risk";
 import { prisma } from "@/lib/db/client";
 
 export async function getDashboardData() {
@@ -15,7 +16,11 @@ export async function getDashboardData() {
     where: { merchantId: merchant.id },
     orderBy: { lastMessageAt: "desc" },
     include: {
-      customer: true,
+      customer: {
+        include: {
+          metrics: true,
+        },
+      },
       messages: { orderBy: { sentAt: "asc" } },
       activities: { orderBy: { occurredAt: "asc" } },
       order: {
@@ -33,6 +38,10 @@ export async function getDashboardData() {
     allowPartialPayment: merchant.policy.allowPartialPayment,
     allowCredit: merchant.policy.allowCredit,
     newCustomerRequiresAdvance: merchant.policy.newCustomerRequiresAdvance,
+    maximumCreditAmount: merchant.policy.maximumCreditAmount,
+    maximumCreditDays: merchant.policy.maximumCreditDays,
+    highValueOrderThreshold: merchant.policy.highValueOrderThreshold,
+    highRiskCustomerRequiresAdvance: merchant.policy.highRiskCustomerRequiresAdvance,
     requireApprovalForFinancialActions: merchant.policy.requireApprovalForFinancialActions,
   };
 
@@ -45,15 +54,34 @@ export async function getDashboardData() {
     policy,
     conversations: conversations.map((conversation) => {
       const order = conversation.order;
+      const metrics = conversation.customer.metrics;
+
+      const risk = calculateCustomerRisk(metrics, {
+        isNew: conversation.customer.isNew,
+        previousOrderCount: metrics?.totalOrders ?? conversation.customer.previousOrderCount,
+        onTimePaymentRate: conversation.customer.onTimePaymentRate,
+      });
+
       const liveRecommendation = order
-        ? evaluatePaymentStrategy(policy, {
-            totalAmount: order.totalAmount,
-            requestedAdvancePercentage: order.requestedAdvancePercentage,
-            requestedDiscountPercentage: order.requestedDiscountPercentage,
-            requestedCredit: order.requestedCredit,
-            customerIsNew: conversation.customer.isNew,
-            previousOrderCount: conversation.customer.previousOrderCount,
-            onTimePaymentRate: conversation.customer.onTimePaymentRate,
+        ? evaluatePolicy({
+            merchantPolicy: policy,
+            order: {
+              totalAmount: order.totalAmount,
+              requestedAdvancePercentage: order.requestedAdvancePercentage,
+              requestedDiscountPercentage: order.requestedDiscountPercentage,
+              requestedCredit: order.requestedCredit,
+              customerIsNew: conversation.customer.isNew || (metrics?.totalOrders ?? 0) === 0,
+              previousOrderCount: metrics?.totalOrders ?? conversation.customer.previousOrderCount,
+              onTimePaymentRate: conversation.customer.onTimePaymentRate,
+            },
+            customer: {
+              id: conversation.customer.id,
+              name: conversation.customer.name,
+              isNew: conversation.customer.isNew,
+              previousOrderCount: conversation.customer.previousOrderCount,
+              onTimePaymentRate: conversation.customer.onTimePaymentRate,
+            },
+            customerHistory: metrics,
           })
         : null;
 
@@ -65,13 +93,41 @@ export async function getDashboardData() {
         lastMessageAt: conversation.lastMessageAt.toISOString(),
         unread: conversation.unread,
         customer: {
+          id: conversation.customer.id,
           name: conversation.customer.name,
           company: conversation.customer.company,
           phone: conversation.customer.phone,
-          isNew: conversation.customer.isNew,
-          previousOrderCount: conversation.customer.previousOrderCount,
+          email: conversation.customer.email,
+          isNew: conversation.customer.isNew || (metrics?.totalOrders ?? 0) === 0,
+          previousOrderCount: metrics?.totalOrders ?? conversation.customer.previousOrderCount,
           onTimePaymentRate: conversation.customer.onTimePaymentRate,
           lastUnitPrice: conversation.customer.lastUnitPrice,
+          metrics: metrics
+            ? {
+                totalOrders: metrics.totalOrders,
+                totalOrderValue: metrics.totalOrderValue,
+                totalPaid: metrics.totalPaid,
+                successfulPayments: metrics.successfulPayments,
+                failedPayments: metrics.failedPayments,
+                latePayments: metrics.latePayments,
+                averagePaymentDelayDays: metrics.averagePaymentDelayDays,
+                lastOrderDate: metrics.lastOrderDate?.toISOString() ?? null,
+                lastPaymentDate: metrics.lastPaymentDate?.toISOString() ?? null,
+                outstandingAmount: metrics.outstandingAmount,
+              }
+            : {
+                totalOrders: conversation.customer.previousOrderCount,
+                totalOrderValue: conversation.customer.previousOrderCount * (conversation.customer.lastUnitPrice ?? 1000) * 30,
+                totalPaid: conversation.customer.previousOrderCount * (conversation.customer.lastUnitPrice ?? 1000) * 30,
+                successfulPayments: conversation.customer.previousOrderCount,
+                failedPayments: 0,
+                latePayments: 0,
+                averagePaymentDelayDays: 0,
+                lastOrderDate: null,
+                lastPaymentDate: null,
+                outstandingAmount: 0,
+              },
+          risk,
         },
         messages: conversation.messages.map((message) => ({
           id: message.id,

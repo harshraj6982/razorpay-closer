@@ -1,7 +1,7 @@
 import { OrderStatus } from "@prisma/client";
 import { prisma } from "@/lib/db/client";
 import { assertTransition, canTransition } from "@/lib/orders/state";
-import { calculatePaymentStrategy } from "@/lib/policies/engine";
+import { evaluatePolicy } from "@/lib/policies/engine";
 import { createRazorpayPaymentLink } from "@/lib/razorpay/client";
 import {
   createFollowUpInput,
@@ -75,7 +75,7 @@ export async function createPaymentLink(raw: unknown): Promise<CreatePaymentLink
       include: {
         conversation: {
           include: {
-            customer: true,
+            customer: { include: { metrics: true } },
             merchant: { include: { policy: true } },
           },
         },
@@ -129,25 +129,30 @@ export async function createPaymentLink(raw: unknown): Promise<CreatePaymentLink
       allowPartialPayment: true,
       allowCredit: false,
       newCustomerRequiresAdvance: true,
+      maximumCreditAmount: 25000,
+      maximumCreditDays: 7,
+      highValueOrderThreshold: 100000,
+      highRiskCustomerRequiresAdvance: true,
       requireApprovalForFinancialActions: true,
     };
 
-    const strategy = calculatePaymentStrategy(
-      policy,
-      {
+    const strategy = evaluatePolicy({
+      merchantPolicy: policy,
+      order: {
         totalAmount: order.totalAmount,
         requestedAdvancePercentage: order.requestedAdvancePercentage,
         requestedDiscountPercentage: order.requestedDiscountPercentage,
         requestedCredit: order.requestedCredit,
         customerIsNew: order.conversation.customer.isNew,
-        previousOrderCount: order.conversation.customer.previousOrderCount,
+        previousOrderCount: order.conversation.customer.metrics?.totalOrders ?? order.conversation.customer.previousOrderCount,
         onTimePaymentRate: order.conversation.customer.onTimePaymentRate,
       },
-      order.conversation.customer,
-    );
+      customer: order.conversation.customer,
+      customerHistory: order.conversation.customer.metrics,
+    });
 
     if (!strategy.canIssuePaymentLink) {
-      const error = `Policy guardrail prevented payment link: ${strategy.reason}`;
+      const error = `Policy guardrail prevented payment link: ${strategy.violations.join(", ")}`;
       await recordAgentAction({
         action: "createPaymentLink",
         orderId: order.id,

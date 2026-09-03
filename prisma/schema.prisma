@@ -49,20 +49,45 @@ model MerchantPolicy {
   allowPartialPayment         Boolean  @default(true)
   allowCredit                 Boolean  @default(false)
   newCustomerRequiresAdvance  Boolean  @default(true)
+  maximumCreditAmount         Int      @default(25000)
+  maximumCreditDays           Int      @default(7)
+  highValueOrderThreshold     Int      @default(100000)
+  highRiskCustomerRequiresAdvance Boolean @default(true)
   requireApprovalForFinancialActions Boolean @default(true)
   updatedAt                   DateTime @updatedAt
 }
 
 model Customer {
-  id                  String         @id @default(cuid())
+  id                  String           @id @default(cuid())
   name                String
   company             String?
   phone               String?
-  isNew               Boolean        @default(false)
-  previousOrderCount  Int            @default(0)
-  onTimePaymentRate   Int            @default(100)
+  email               String?
+  isNew               Boolean          @default(false)
+  previousOrderCount  Int              @default(0)
+  onTimePaymentRate   Int              @default(100)
   lastUnitPrice       Int?
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt @default(now())
+  metrics             CustomerMetrics?
   conversations       Conversation[]
+}
+
+model CustomerMetrics {
+  id                      String    @id @default(cuid())
+  customerId              String    @unique
+  customer                Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  totalOrders             Int       @default(0)
+  totalOrderValue         Int       @default(0)
+  totalPaid               Int       @default(0)
+  successfulPayments      Int       @default(0)
+  failedPayments          Int       @default(0)
+  latePayments            Int       @default(0)
+  averagePaymentDelayDays Int       @default(0)
+  lastOrderDate           DateTime?
+  lastPaymentDate         DateTime?
+  outstandingAmount       Int       @default(0)
+  updatedAt               DateTime  @updatedAt
 }
 
 model Conversation {
@@ -165,3 +190,70 @@ model AgentActionLog {
   success        Boolean  @default(true)
   createdAt      DateTime @default(now())
 }
+
+model PolicyAuditLog {
+  id             String   @id @default(cuid())
+  orderId        String?
+  customerId     String?
+  actionRequested String
+  policyDecision String
+  policyVersion  Int      @default(1)
+  reasons        String   @default("[]")
+  violations     String   @default("[]")
+  allowed        Boolean  @default(true)
+  createdAt      DateTime @default(now())
+}
+
+model EvaluationRun {
+  id                  String             @id @default(cuid())
+  startedAt           DateTime           @default(now())
+  completedAt         DateTime?
+  totalScenarios      Int                @default(0)
+  passedScenarios     Int                @default(0)
+  failedScenarios     Int                @default(0)
+  overallScore        Float              @default(0.0)
+  policyScore         Float              @default(0.0)
+  actionScore         Float              @default(0.0)
+  amountScore         Float              @default(0.0)
+  unsafeSuggested     Int                @default(0)
+  unsafeExecuted      Int                @default(0)
+  unsafeBlocked       Int                @default(0)
+  humanReviewRate     Float              @default(0.0)
+  precision           Float              @default(0.0)
+  recall              Float              @default(0.0)
+  f1Score             Float              @default(0.0)
+  baselineComparison  String?            // JSON stringified comparison metrics
+  categoryMetrics     String?            // JSON stringified category breakdown
+  createdAt           DateTime           @default(now())
+  results             EvaluationResult[]
+}
+
+model EvaluationResult {
+  id                    String        @id @default(cuid())
+  evaluationRunId       String
+  evaluationRun         EvaluationRun @relation(fields: [evaluationRunId], references: [id], onDelete: Cascade)
+  scenarioId            String
+  category              String
+  passed                Boolean
+  extractionScore       Float         @default(1.0)
+  amountCorrect         Boolean       @default(true)
+  policyCorrect         Boolean       @default(true)
+  decisionCorrect       Boolean       @default(true)
+  actionCorrect         Boolean       @default(true)
+  stateCorrect          Boolean       @default(true)
+  toolExecutionSuccess  Boolean       @default(true)
+  humanReviewCorrect    Boolean       @default(true)
+  unsafeActionPrevented Boolean       @default(false)
+  failureType           String?
+  latencyMs             Int           @default(0)
+  error                 String?
+  actualOutput          String        // JSON string of actual results
+  expectedOutput        String        // JSON string of expected results
+  conversation          String?       // Raw conversation context
+  customerProfile       String?       // JSON string of customer metrics & risk
+  merchantPolicy        String?       // JSON string of merchant policy rules
+  createdAt             DateTime      @default(now())
+
+  @@index([evaluationRunId, scenarioId])
+}
+

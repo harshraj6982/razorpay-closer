@@ -13,7 +13,12 @@ function ist(hours: number, minutes: number, day = 31) {
   );
 }
 
+function daysAgo(days: number) {
+  return new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+}
+
 export async function seedDatabase() {
+  await prisma.policyAuditLog.deleteMany();
   await prisma.agentActionLog.deleteMany();
   await prisma.activityEvent.deleteMany();
   await prisma.orderStatusEvent.deleteMany();
@@ -21,6 +26,7 @@ export async function seedDatabase() {
   await prisma.message.deleteMany();
   await prisma.order.deleteMany();
   await prisma.conversation.deleteMany();
+  await prisma.customerMetrics.deleteMany();
   await prisma.customer.deleteMany();
   await prisma.merchantPolicy.deleteMany();
   await prisma.merchant.deleteMany();
@@ -37,69 +43,153 @@ export async function seedDatabase() {
           allowPartialPayment: true,
           allowCredit: false,
           newCustomerRequiresAdvance: true,
+          maximumCreditAmount: 25000,
+          maximumCreditDays: 7,
+          highValueOrderThreshold: 100000,
+          highRiskCustomerRequiresAdvance: true,
           requireApprovalForFinancialActions: true,
         },
       },
     },
   });
 
+  // Customer 1: Rahul Textiles (Vikram Shah) - Trusted Repeat Customer
   const vikram = await prisma.customer.create({
     data: {
-      name: "Vikram Shah",
-      company: "Rajan Textiles",
+      name: "Rahul Textiles",
+      company: "Rahul Textiles",
       phone: "+91 98200 11111",
+      email: "rahul@rahultextiles.com",
       isNew: false,
       previousOrderCount: 7,
       onTimePaymentRate: 100,
       lastUnitPrice: 1850,
+      metrics: {
+        create: {
+          totalOrders: 7,
+          totalOrderValue: 420000,
+          totalPaid: 420000,
+          successfulPayments: 7,
+          failedPayments: 0,
+          latePayments: 0,
+          averagePaymentDelayDays: 0,
+          lastOrderDate: daysAgo(12),
+          lastPaymentDate: daysAgo(12),
+          outstandingAmount: 0,
+        },
+      },
     },
   });
 
+  // Customer 2: New Buyer (Priya Nair) - New Lead
   const priya = await prisma.customer.create({
     data: {
       name: "Priya Nair",
       company: "Nova Prints",
       phone: "+91 98765 22001",
+      email: "priya@novaprints.in",
       isNew: true,
       previousOrderCount: 0,
       onTimePaymentRate: 0,
       lastUnitPrice: null,
+      metrics: {
+        create: {
+          totalOrders: 0,
+          totalOrderValue: 0,
+          totalPaid: 0,
+          successfulPayments: 0,
+          failedPayments: 0,
+          latePayments: 0,
+          averagePaymentDelayDays: 0,
+          lastOrderDate: null,
+          lastPaymentDate: null,
+          outstandingAmount: 0,
+        },
+      },
     },
   });
 
-  const arjun = await prisma.customer.create({
-    data: {
-      name: "Arjun Mehta",
-      company: "Campus Store",
-      phone: "+91 99000 33445",
-      isNew: false,
-      previousOrderCount: 2,
-      onTimePaymentRate: 50,
-      lastUnitPrice: 400,
-    },
-  });
-
+  // Customer 3: Risky Buyer (Meera Kapoor) - Bad Payment History
   const meera = await prisma.customer.create({
     data: {
       name: "Meera Kapoor",
       company: "Hotel Lakeview",
       phone: "+91 98111 77880",
+      email: "procurement@lakeviewresort.com",
       isNew: false,
-      previousOrderCount: 3,
-      onTimePaymentRate: 67,
-      lastUnitPrice: 980,
+      previousOrderCount: 8,
+      onTimePaymentRate: 62,
+      lastUnitPrice: 900,
+      metrics: {
+        create: {
+          totalOrders: 8,
+          totalOrderValue: 180000,
+          totalPaid: 162000,
+          successfulPayments: 5,
+          failedPayments: 1,
+          latePayments: 3,
+          averagePaymentDelayDays: 8,
+          lastOrderDate: daysAgo(20),
+          lastPaymentDate: daysAgo(25),
+          outstandingAmount: 18000,
+        },
+      },
     },
   });
 
+  // Customer 4: Discount Negotiator (Arjun Mehta) - Asking 15% discount
+  const arjun = await prisma.customer.create({
+    data: {
+      name: "Arjun Mehta",
+      company: "Campus Store",
+      phone: "+91 99000 33445",
+      email: "arjun@campusstore.edu",
+      isNew: false,
+      previousOrderCount: 5,
+      onTimePaymentRate: 100,
+      lastUnitPrice: 400,
+      metrics: {
+        create: {
+          totalOrders: 5,
+          totalOrderValue: 150000,
+          totalPaid: 150000,
+          successfulPayments: 5,
+          failedPayments: 0,
+          latePayments: 0,
+          averagePaymentDelayDays: 0,
+          lastOrderDate: daysAgo(40),
+          lastPaymentDate: daysAgo(40),
+          outstandingAmount: 0,
+        },
+      },
+    },
+  });
+
+  // Customer 5: Suresh Iyer (City Mart) - Partial Payment Tracking
   const suresh = await prisma.customer.create({
     data: {
       name: "Suresh Iyer",
       company: "City Mart",
       phone: "+91 97654 11223",
+      email: "suresh@citymart.in",
       isNew: false,
       previousOrderCount: 4,
       onTimePaymentRate: 100,
       lastUnitPrice: 1000,
+      metrics: {
+        create: {
+          totalOrders: 4,
+          totalOrderValue: 200000,
+          totalPaid: 165000,
+          successfulPayments: 4,
+          failedPayments: 0,
+          latePayments: 0,
+          averagePaymentDelayDays: 0,
+          lastOrderDate: daysAgo(5),
+          lastPaymentDate: daysAgo(5),
+          outstandingAmount: 35000,
+        },
+      },
     },
   });
 
@@ -146,7 +236,7 @@ async function seedTrustedRepeat(merchantId: string, customerId: string) {
           deliveryDate: "Monday",
           customerRequestSummary: "₹74,000 order · 30% now · delivery Monday",
           reason:
-            "The order is large, the customer is trusted, and the requested 30% advance satisfies the merchant's minimum-payment policy.",
+            "Customer has completed 7 previous orders without a late payment. The requested 30% advance satisfies the merchant's 25% minimum advance policy. Recommended action: REQUEST 30% ADVANCE",
           nextAction: "createPaymentLink",
           statusHistory: {
             create: [
@@ -211,21 +301,21 @@ async function seedNewCustomer(merchantId: string, customerId: string) {
       id,
       merchantId,
       customerId,
-      title: "12 hoodies · first order",
+      title: "40 hoodies · first order",
       caseType: "new_customer",
-      preview: "Can I pay after the fest? Found you on Instagram.",
+      preview: "Can I pay after delivery? Need 40 hoodies.",
       lastMessageAt: ist(11, 5),
       unread: true,
       messages: {
         create: [
           {
             role: MessageRole.CUSTOMER,
-            body: "Hi, I found you on Instagram. Need 12 hoodies for a college fest this weekend. What's the rate? Can I pay after the event?",
+            body: "Hi, need 40 hoodies for our startup event. Total should be around 40k. Can I pay after delivery?",
             sentAt: ist(11, 2),
           },
           {
             role: MessageRole.CUSTOMER,
-            body: "Budget is tight, so COD would be perfect if possible.",
+            body: "Budget is tight, so COD or post-delivery payment would be perfect.",
             sentAt: ist(11, 5),
           },
         ],
@@ -233,27 +323,27 @@ async function seedNewCustomer(merchantId: string, customerId: string) {
       order: {
         create: {
           status: OrderStatus.QUALIFIED,
-          intent: "event_order",
-          products: JSON.stringify([{ name: "Hoodies", quantity: 12, unitPrice: 890 }]),
-          quantity: 12,
-          unitPrice: 890,
-          totalAmount: 10680,
+          intent: "order",
+          products: JSON.stringify([{ name: "Hoodies", quantity: 40, unitPrice: 1000 }]),
+          quantity: 40,
+          unitPrice: 1000,
+          totalAmount: 40000,
           requestedAdvancePercentage: 0,
           recommendedAdvancePercentage: 25,
-          recommendedAdvanceAmount: 2670,
-          remainingAmount: 8010,
+          recommendedAdvanceAmount: 10000,
+          remainingAmount: 30000,
           requestedCredit: true,
           deliveryDate: "This weekend",
-          customerRequestSummary: "New Instagram lead · 12 hoodies · pay after event",
+          customerRequestSummary: "New buyer · 40 hoodies · ₹40,000 · pay after delivery",
           reason:
-            "This is a new customer. Policy requires a 25% advance before production starts.",
+            "Customer has no previous order history. Merchant policy requires new customers to provide an advance. Recommended action: REQUEST 25% ADVANCE",
           nextAction: "createPaymentLink",
           statusHistory: {
             create: [
               {
                 fromStatus: null,
                 toStatus: OrderStatus.NEW,
-                reason: "Inbound Instagram enquiry",
+                reason: "Inbound inquiry received",
                 recordedAt: ist(11, 2),
               },
               {
@@ -272,13 +362,13 @@ async function seedNewCustomer(merchantId: string, customerId: string) {
             occurredAt: ist(11, 6),
             type: "parse",
             title: "AI parsed customer request",
-            detail: "12 hoodies · post-event payment requested",
+            detail: "40 hoodies · post-delivery payment requested",
           },
           {
             occurredAt: ist(11, 6),
             type: "calc",
-            title: "Order value calculated: ₹10,680",
-            detail: "12 × ₹890 list price",
+            title: "Order value calculated: ₹40,000",
+            detail: "40 × ₹1,000 list price",
           },
           {
             occurredAt: ist(11, 7),
@@ -290,7 +380,7 @@ async function seedNewCustomer(merchantId: string, customerId: string) {
             occurredAt: ist(11, 7),
             type: "recommend",
             title: "25% advance recommended",
-            detail: "Decline COD · collect ₹2,670 to start production",
+            detail: "Decline COD · collect ₹10,000 to start production",
           },
         ],
       },
@@ -305,20 +395,20 @@ async function seedDiscount(merchantId: string, customerId: string) {
       id,
       merchantId,
       customerId,
-      title: "200 tees · 20% off ask",
+      title: "250 tees · 15% discount ask",
       caseType: "excessive_discount",
-      preview: "Give me 20% off or I go to someone else.",
+      preview: "Give me 15% discount on this ₹100,000 order.",
       lastMessageAt: ist(12, 18),
       messages: {
         create: [
           {
             role: MessageRole.CUSTOMER,
-            body: "Bro 200 t-shirts. Best price last time was 400. Give me 20% off or I go to someone else this week.",
+            body: "Bro 250 t-shirts. Rate was 400 last time. Total is ₹100,000. Give me 15% discount.",
             sentAt: ist(12, 14),
           },
           {
             role: MessageRole.CUSTOMER,
-            body: "I can pay 50% now if the discount is done.",
+            body: "I can pay 50% advance now if 15% discount is applied.",
             sentAt: ist(12, 18),
           },
         ],
@@ -326,21 +416,21 @@ async function seedDiscount(merchantId: string, customerId: string) {
       order: {
         create: {
           status: OrderStatus.QUALIFIED,
-          intent: "bulk_order",
-          products: JSON.stringify([{ name: "T-shirts", quantity: 200, unitPrice: 400 }]),
-          quantity: 200,
+          intent: "discount_request",
+          products: JSON.stringify([{ name: "T-shirts", quantity: 250, unitPrice: 400 }]),
+          quantity: 250,
           unitPrice: 400,
-          totalAmount: 80000,
+          totalAmount: 100000,
           requestedAdvancePercentage: 50,
           recommendedAdvancePercentage: 50,
-          recommendedAdvanceAmount: 38000,
-          remainingAmount: 38000,
-          requestedDiscountPercentage: 20,
+          recommendedAdvanceAmount: 47500,
+          remainingAmount: 47500,
+          requestedDiscountPercentage: 15,
           requestedCredit: false,
           deliveryDate: "This week",
-          customerRequestSummary: "200 tees at ₹400 · asking 20% discount",
+          customerRequestSummary: "250 tees at ₹400 (₹100,000) · asking 15% discount",
           reason:
-            "Counter with a 5% discount. The requested 20% discount would breach merchant policy.",
+            "Customer requested 15% discount. Merchant policy allows maximum 5%. Recommended action: REJECT 15% DISCOUNT, ALLOW MAXIMUM 5%",
           nextAction: "createFollowUp",
           statusHistory: {
             create: [
@@ -366,25 +456,25 @@ async function seedDiscount(merchantId: string, customerId: string) {
             occurredAt: ist(12, 19),
             type: "parse",
             title: "AI parsed customer request",
-            detail: "200 t-shirts · 20% discount demanded",
+            detail: "250 t-shirts · 15% discount demanded",
           },
           {
             occurredAt: ist(12, 19),
             type: "calc",
-            title: "Order value calculated: ₹80,000",
-            detail: "200 × ₹400 list",
+            title: "Order value calculated: ₹100,000",
+            detail: "250 × ₹400 list",
           },
           {
             occurredAt: ist(12, 20),
             type: "policy",
             title: "Merchant policy evaluated",
-            detail: "Maximum discount 5% · requested 20%",
+            detail: "Maximum discount 5% · requested 15%",
           },
           {
             occurredAt: ist(12, 20),
             type: "recommend",
             title: "Counter-offer 5% discount",
-            detail: "Do not issue a payment link at the requested price",
+            detail: "Do not issue payment link at 15% discount",
           },
         ],
       },
@@ -399,20 +489,20 @@ async function seedCredit(merchantId: string, customerId: string) {
       id,
       merchantId,
       customerId,
-      title: "Staff uniforms · 45-day credit",
+      title: "100 uniforms · 30-day credit ask",
       caseType: "credit_request",
-      preview: "Run it on 45 day credit like last year?",
+      preview: "Give me 30 days credit for ₹90,000 order.",
       lastMessageAt: ist(14, 3),
       messages: {
         create: [
           {
             role: MessageRole.CUSTOMER,
-            body: "Need 28 staff uniforms, same cut as last year. Total should be around 25k.",
+            body: "Need 100 staff uniforms for new season. Total amount is ₹90,000.",
             sentAt: ist(13, 55),
           },
           {
             role: MessageRole.CUSTOMER,
-            body: "Can you run it on 45 day credit like last year? We'll pay after wedding season.",
+            body: "Give me 30 days credit. We will settle after guest bookings.",
             sentAt: ist(14, 3),
           },
         ],
@@ -420,41 +510,41 @@ async function seedCredit(merchantId: string, customerId: string) {
       order: {
         create: {
           status: OrderStatus.QUOTE_CREATED,
-          intent: "repeat_order",
+          intent: "credit_request",
           products: JSON.stringify([
-            { name: "Staff uniforms", quantity: 28, unitPrice: 890 },
+            { name: "Staff uniforms", quantity: 100, unitPrice: 900 },
           ]),
-          quantity: 28,
-          unitPrice: 890,
-          totalAmount: 24920,
+          quantity: 100,
+          unitPrice: 900,
+          totalAmount: 90000,
           requestedAdvancePercentage: 0,
           recommendedAdvancePercentage: 25,
-          recommendedAdvanceAmount: 6230,
-          remainingAmount: 18690,
+          recommendedAdvanceAmount: 22500,
+          remainingAmount: 67500,
           requestedCredit: true,
           deliveryDate: "Before wedding season",
-          customerRequestSummary: "₹24,920 uniforms · 45-day credit requested",
+          customerRequestSummary: "₹90,000 uniforms · 30-day credit requested · HIGH risk buyer",
           reason:
-            "Credit was requested but is disabled. Collect at least the minimum advance via a payment link instead of opening a receivable.",
-          nextAction: "sendPaymentRequest",
+            "Customer has 3 late payments and ₹18,000 outstanding. Credit is rejected. Policy requires advance payment and human approval before fulfillment. Recommended action: REJECT CREDIT, REQUIRE ADVANCE, REQUIRE HUMAN APPROVAL",
+          nextAction: "createPaymentLink",
           statusHistory: {
             create: [
               {
                 fromStatus: null,
                 toStatus: OrderStatus.NEW,
-                reason: "Inbound hotel restock",
+                reason: "Inbound restock inquiry",
                 recordedAt: ist(13, 55),
               },
               {
                 fromStatus: OrderStatus.NEW,
                 toStatus: OrderStatus.QUALIFIED,
-                reason: "Quantity and catalog rate confirmed",
+                reason: "Quantity and unit rate confirmed",
                 recordedAt: ist(14, 4),
               },
               {
                 fromStatus: OrderStatus.QUALIFIED,
                 toStatus: OrderStatus.QUOTE_CREATED,
-                reason: "Quote created without credit terms",
+                reason: "Quote created with advance requirement",
                 recordedAt: ist(14, 5),
               },
             ],
@@ -467,25 +557,25 @@ async function seedCredit(merchantId: string, customerId: string) {
             occurredAt: ist(14, 4),
             type: "parse",
             title: "AI parsed customer request",
-            detail: "28 uniforms · 45-day credit",
+            detail: "100 uniforms · 30-day credit",
           },
           {
             occurredAt: ist(14, 4),
             type: "calc",
-            title: "Order value calculated: ₹24,920",
-            detail: "28 × ₹890",
+            title: "Order value calculated: ₹90,000",
+            detail: "100 × ₹900",
           },
           {
             occurredAt: ist(14, 5),
             type: "policy",
             title: "Merchant policy evaluated",
-            detail: "allowCredit = false",
+            detail: "HIGH risk customer · credit rejected · human approval required",
           },
           {
             occurredAt: ist(14, 5),
             type: "recommend",
-            title: "Decline credit · request 25% advance",
-            detail: "₹6,230 to book production",
+            title: "Decline credit · require 25% advance + approval",
+            detail: "₹22,500 advance to book production",
           },
         ],
       },

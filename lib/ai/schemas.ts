@@ -1,15 +1,71 @@
 import { z } from "zod";
 
 export const merchantPolicySchema = z.object({
-  minimumAdvancePercentage: z.number().int().min(0).max(100),
-  maximumDiscountPercentage: z.number().int().min(0).max(100),
-  allowPartialPayment: z.boolean(),
-  allowCredit: z.boolean(),
-  newCustomerRequiresAdvance: z.boolean(),
+  minimumAdvancePercentage: z.number().int().min(0).max(100).default(25),
+  maximumDiscountPercentage: z.number().int().min(0).max(100).default(5),
+  allowPartialPayment: z.boolean().default(true),
+  allowCredit: z.boolean().default(false),
+  newCustomerRequiresAdvance: z.boolean().default(true),
+  maximumCreditAmount: z.number().int().nonnegative().default(25000),
+  maximumCreditDays: z.number().int().positive().default(7),
+  highValueOrderThreshold: z.number().int().positive().default(100000),
+  highRiskCustomerRequiresAdvance: z.boolean().default(true),
   requireApprovalForFinancialActions: z.boolean().default(true),
 });
 
 export type MerchantPolicyInput = z.infer<typeof merchantPolicySchema>;
+
+export const customerMetricsSchema = z.object({
+  customerId: z.string().optional(),
+  totalOrders: z.number().int().nonnegative().default(0),
+  totalOrderValue: z.number().int().nonnegative().default(0),
+  totalPaid: z.number().int().nonnegative().default(0),
+  successfulPayments: z.number().int().nonnegative().default(0),
+  failedPayments: z.number().int().nonnegative().default(0),
+  latePayments: z.number().int().nonnegative().default(0),
+  averagePaymentDelayDays: z.number().int().nonnegative().default(0),
+  lastOrderDate: z.date().nullable().optional(),
+  lastPaymentDate: z.date().nullable().optional(),
+  outstandingAmount: z.number().int().nonnegative().default(0),
+});
+
+export type CustomerMetricsInput = z.infer<typeof customerMetricsSchema>;
+
+export const customerRiskLevelSchema = z.enum(["LOW", "MEDIUM", "HIGH"]);
+export type CustomerRiskLevel = z.infer<typeof customerRiskLevelSchema>;
+
+export const customerRiskSchema = z.object({
+  score: z.number().int().min(0).max(100),
+  level: customerRiskLevelSchema,
+  reasons: z.array(z.string()),
+});
+
+export type CustomerRiskResult = z.infer<typeof customerRiskSchema>;
+
+export const policyEvaluationResultSchema = z.object({
+  allowed: z.boolean(),
+  decision: z.string(),
+  recommendedAdvancePercentage: z.number().int().min(0).max(100),
+  recommendedAdvanceAmount: z.number().int().nonnegative(),
+  maximumAllowedDiscount: z.number().int().nonnegative(),
+  approvedDiscountPercentage: z.number().int().min(0).max(100).default(0),
+  discountedTotalAmount: z.number().int().nonnegative().default(0),
+  remainingAmount: z.number().int().nonnegative().default(0),
+  creditAllowed: z.boolean(),
+  requiresHumanApproval: z.boolean(),
+  canIssuePaymentLink: z.boolean().default(true),
+  nextAction: z.enum([
+    "createPaymentLink",
+    "sendPaymentRequest",
+    "createFollowUp",
+    "updateOrderStatus",
+    "getPaymentStatus",
+  ]).default("createPaymentLink"),
+  reasons: z.array(z.string()),
+  violations: z.array(z.string()),
+});
+
+export type PolicyEvaluationResult = z.infer<typeof policyEvaluationResultSchema>;
 
 export const productItemSchema = z.object({
   name: z.string(),
@@ -27,6 +83,7 @@ export const extractionSchema = z.object({
   requestedAdvanceAmount: z.number().int().nonnegative().nullable(),
   requestedDiscountPercentage: z.number().int().min(0).max(100).nullable(),
   requestedCredit: z.boolean(),
+  requestedCreditDays: z.number().int().positive().nullable().optional(),
   deliveryDate: z.string().nullable(),
   intent: z.enum([
     "order",

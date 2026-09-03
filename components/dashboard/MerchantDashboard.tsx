@@ -1,7 +1,8 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Shield, RotateCcw, Loader2 } from "lucide-react";
+import Link from "next/link";
+import { Shield, RotateCcw, Loader2, BarChart3 } from "lucide-react";
 import type { DashboardConversation, DashboardData } from "@/lib/db/queries";
 import { resetDemoData } from "@/lib/actions/demo";
 import { InboxList } from "@/components/inbox/InboxList";
@@ -60,6 +61,17 @@ export function MerchantDashboard({ data }: { data: DashboardData }) {
         </div>
 
         <div className="flex items-center gap-2">
+          <Link
+            href="/dashboard/evaluation"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 px-2.5 text-xs font-semibold text-indigo-700 hover:bg-indigo-100/80 transition-colors shadow-xs"
+          >
+            <BarChart3 className="h-3.5 w-3.5 text-indigo-600" />
+            <span>Evaluation Engine</span>
+            <span className="rounded-full bg-indigo-600 px-1.5 py-0.2 text-[9px] text-white font-bold">
+              100%
+            </span>
+          </Link>
+
           <button
             type="button"
             disabled={isResetting}

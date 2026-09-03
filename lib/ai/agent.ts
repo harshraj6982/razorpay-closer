@@ -1,7 +1,9 @@
 import { OrderStatus, type Prisma } from "@prisma/client";
 import OpenAI from "openai";
 import { prisma } from "@/lib/db/client";
-import { calculatePaymentStrategy } from "@/lib/policies/engine";
+import { evaluatePolicy } from "@/lib/policies/engine";
+import { getCustomerContext } from "@/lib/policies/customer";
+import { recordPolicyAudit } from "@/lib/policies/audit";
 import { extractOrderFromConversation } from "./extractor";
 import { agentTools } from "./execute";
 import { agentToolDefinitions } from "./tools";
@@ -9,12 +11,12 @@ import type {
   AgentDecision,
   MerchantPolicyInput,
   OrderExtraction,
-  PaymentRecommendation,
+  PolicyEvaluationResult,
 } from "./schemas";
 
 type ConversationWithDetails = Prisma.ConversationGetPayload<{
   include: {
-    customer: true;
+    customer: { include: { metrics: true } };
     messages: true;
     merchant: { include: { policy: true } };
     order: { include: { payments: true } };
@@ -30,7 +32,7 @@ export type AgentRunResult = {
   conversationId: string;
   decision: AgentDecision;
   extraction: OrderExtraction;
-  recommendation: PaymentRecommendation;
+  recommendation: PolicyEvaluationResult;
   toolCallsExecuted: number;
   completed: boolean;
 };
@@ -50,13 +52,14 @@ const MAX_TOOL_CALLS = 3;
  *
  * Workflow:
  * 1. Read customer conversation.
- * 2. Read structured order.
+ * 2. Load customer history metrics and calculate deterministic risk score.
  * 3. Read merchant policy.
- * 4. Determine next appropriate action via OpenAI Function Calling (or deterministic engine).
- * 5. If financial action requires merchant approval and is not pre-approved, stage for approval.
- * 6. Otherwise, invoke approved backend tool with server-side guardrails.
- * 7. Receive tool result, re-evaluate transaction state (up to 3 tool calls max).
- * 8. Return structured business decision and update order state.
+ * 4. Run authoritative Policy Evaluation.
+ * 5. Determine next appropriate action via OpenAI Function Calling (or deterministic engine).
+ * 6. Record policy audit log.
+ * 7. If financial action requires merchant approval and is not pre-approved, stage for approval.
+ * 8. Otherwise, invoke approved backend tool with server-side guardrails.
+ * 9. Return structured business decision and update order state.
  */
 export async function runBoundedAgent(
   conversationId: string,
@@ -68,7 +71,7 @@ export async function runBoundedAgent(
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
     include: {
-      customer: true,
+      customer: { include: { metrics: true } },
       messages: { orderBy: { sentAt: "asc" } },
       merchant: { include: { policy: true } },
       order: {
@@ -89,10 +92,23 @@ export async function runBoundedAgent(
     allowPartialPayment: conversation.merchant.policy?.allowPartialPayment ?? true,
     allowCredit: conversation.merchant.policy?.allowCredit ?? false,
     newCustomerRequiresAdvance: conversation.merchant.policy?.newCustomerRequiresAdvance ?? true,
+    maximumCreditAmount: conversation.merchant.policy?.maximumCreditAmount ?? 25000,
+    maximumCreditDays: conversation.merchant.policy?.maximumCreditDays ?? 7,
+    highValueOrderThreshold: conversation.merchant.policy?.highValueOrderThreshold ?? 100000,
+    highRiskCustomerRequiresAdvance: conversation.merchant.policy?.highRiskCustomerRequiresAdvance ?? true,
     requireApprovalForFinancialActions: conversation.merchant.policy?.requireApprovalForFinancialActions ?? true,
   };
 
-  // 1. Extract or load order structure
+  // 1. Load Customer History Context & Risk
+  const customerFullContext = await getCustomerContext(conversation.customer.id);
+  const customerHistory = customerFullContext?.metrics ?? null;
+  const customerRisk = customerFullContext?.risk ?? {
+    score: 100,
+    level: "LOW" as const,
+    reasons: ["Trusted customer"],
+  };
+
+  // 2. Extract or load order structure
   const extraction = await extractOrderFromConversation(
     conversation.messages.map((m) => ({
       role: m.role,
@@ -104,35 +120,69 @@ export async function runBoundedAgent(
       company: conversation.customer.company,
       phone: conversation.customer.phone,
       isNew: conversation.customer.isNew,
-      previousOrderCount: conversation.customer.previousOrderCount,
+      previousOrderCount: customerHistory?.totalOrders ?? conversation.customer.previousOrderCount,
       onTimePaymentRate: conversation.customer.onTimePaymentRate,
       lastUnitPrice: conversation.customer.lastUnitPrice,
     },
   );
 
-  // 2. Authoritative Policy Strategy Calculation
-  const recommendation = calculatePaymentStrategy(
+  // 3. Authoritative Policy Strategy Calculation
+  const recommendation = evaluatePolicy({
     merchantPolicy,
-    {
+    order: {
       totalAmount: extraction.totalAmount ?? 0,
       requestedAdvancePercentage: extraction.requestedAdvancePercentage,
       requestedDiscountPercentage: extraction.requestedDiscountPercentage,
       requestedCredit: extraction.requestedCredit,
-      customerIsNew: conversation.customer.isNew,
-      previousOrderCount: conversation.customer.previousOrderCount,
+      requestedCreditDays: extraction.requestedCreditDays,
+      customerIsNew: conversation.customer.isNew || (customerHistory?.totalOrders ?? 0) === 0,
+      previousOrderCount: customerHistory?.totalOrders ?? conversation.customer.previousOrderCount,
       onTimePaymentRate: conversation.customer.onTimePaymentRate,
       isAmbiguous: extraction.isAmbiguous,
       missingPrice: extraction.missingPrice,
+      product: extraction.product,
+      quantity: extraction.quantity,
+      unitPrice: extraction.unitPrice,
     },
-    conversation.customer,
-  );
+    customer: {
+      id: conversation.customer.id,
+      name: conversation.customer.name,
+      isNew: conversation.customer.isNew,
+      previousOrderCount: conversation.customer.previousOrderCount,
+      onTimePaymentRate: conversation.customer.onTimePaymentRate,
+    },
+    customerHistory,
+  });
 
-  // 3. Upsert order in database
+  // Record Policy Audit Trail
+  await recordPolicyAudit({
+    customerId: conversation.customer.id,
+    conversationId: conversation.id,
+    actionRequested: recommendation.nextAction,
+    evaluation: recommendation,
+    customerName: conversation.customer.name,
+  });
+
+  // 4. Upsert order in database
   let order = conversation.order;
   let initialStatus: OrderStatus = OrderStatus.QUOTE_CREATED;
   if (extraction.isAmbiguous || extraction.missingPrice) {
     initialStatus = OrderStatus.QUALIFIED;
   }
+
+  const plainReason = generateContextAwareReason({
+    customer: conversation.customer,
+    customerRisk,
+    customerHistory,
+    order: {
+      totalAmount: extraction.totalAmount ?? 0,
+      requestedAdvancePercentage: extraction.requestedAdvancePercentage,
+      requestedDiscountPercentage: extraction.requestedDiscountPercentage,
+      requestedCredit: extraction.requestedCredit,
+    },
+    merchantPolicy,
+    recommendation,
+  });
 
   if (order) {
     order = await prisma.order.update({
@@ -147,7 +197,10 @@ export async function runBoundedAgent(
         requestedAdvancePercentage: extraction.requestedAdvancePercentage,
         recommendedAdvancePercentage: recommendation.recommendedAdvancePercentage,
         recommendedAdvanceAmount: recommendation.recommendedAdvanceAmount,
-        remainingAmount: order.status === OrderStatus.PARTIALLY_PAID || order.status === OrderStatus.PAID ? order.remainingAmount : recommendation.remainingAmount,
+        remainingAmount:
+          order.status === OrderStatus.PARTIALLY_PAID || order.status === OrderStatus.PAID
+            ? order.remainingAmount
+            : recommendation.remainingAmount,
         requestedDiscountPercentage: extraction.requestedDiscountPercentage,
         requestedCredit: extraction.requestedCredit,
         deliveryDate: extraction.deliveryDate ?? order.deliveryDate,
@@ -173,7 +226,7 @@ export async function runBoundedAgent(
         requestedCredit: extraction.requestedCredit,
         deliveryDate: extraction.deliveryDate,
         customerRequestSummary: extraction.customerRequestSummary,
-        reason: recommendation.reason,
+        reason: plainReason,
         nextAction: recommendation.nextAction,
         statusHistory: {
           create: [
@@ -196,7 +249,7 @@ export async function runBoundedAgent(
     });
   }
 
-  // 4. Bounded Agent Execution Loop (max 3 tool calls)
+  // 5. Bounded Agent Execution Loop (max 3 tool calls)
   const maxCalls = options?.overrideToolLimit ?? MAX_TOOL_CALLS;
   let toolCallsExecuted = 0;
   let decision: AgentDecision;
@@ -212,6 +265,9 @@ export async function runBoundedAgent(
         merchantPolicy,
         extraction,
         recommendation,
+        customerContextText: customerFullContext?.summaryText ?? "",
+        customerRisk,
+        businessReason: plainReason,
         options,
         maxCalls,
       });
@@ -224,6 +280,8 @@ export async function runBoundedAgent(
         merchantPolicy,
         extraction,
         recommendation,
+        customerRisk,
+        businessReason: plainReason,
         options,
       });
       toolCallsExecuted = decision.toolCallsCount;
@@ -235,12 +293,14 @@ export async function runBoundedAgent(
       merchantPolicy,
       extraction,
       recommendation,
+      customerRisk,
+      businessReason: plainReason,
       options,
     });
     toolCallsExecuted = decision.toolCallsCount;
   }
 
-  // 5. Update Order nextAction and reason with authoritative decision
+  // 6. Update Order nextAction and reason with authoritative decision
   await prisma.order.update({
     where: { id: order.id },
     data: {
@@ -261,8 +321,57 @@ export async function runBoundedAgent(
 }
 
 /**
+ * Builds concise, explainable business reasoning matching merchant policy and customer risk.
+ */
+function generateContextAwareReason({
+  customer,
+  customerRisk,
+  customerHistory,
+  order,
+  merchantPolicy,
+  recommendation,
+}: {
+  customer: { name: string; isNew: boolean; previousOrderCount: number; onTimePaymentRate: number };
+  customerRisk: { level: string; reasons: string[] };
+  customerHistory: { totalOrders?: number; latePayments?: number; outstandingAmount?: number } | null;
+  order: {
+    totalAmount: number;
+    requestedAdvancePercentage?: number | null;
+    requestedDiscountPercentage?: number | null;
+    requestedCredit?: boolean;
+  };
+  merchantPolicy: MerchantPolicyInput;
+  recommendation: PolicyEvaluationResult;
+}): string {
+  const isNew = customer.isNew || (customerHistory?.totalOrders ?? customer.previousOrderCount) === 0;
+
+  if (order.requestedDiscountPercentage != null && order.requestedDiscountPercentage > merchantPolicy.maximumDiscountPercentage) {
+    return `Customer requested ${order.requestedDiscountPercentage}% discount. Merchant policy allows maximum ${merchantPolicy.maximumDiscountPercentage}%. Recommended action: REJECT ${order.requestedDiscountPercentage}% DISCOUNT, ALLOW MAXIMUM ${merchantPolicy.maximumDiscountPercentage}%`;
+  }
+
+  if (isNew && merchantPolicy.newCustomerRequiresAdvance) {
+    return `Customer has no previous order history. Merchant policy requires new customers to provide an advance. Recommended action: REQUEST ${recommendation.recommendedAdvancePercentage}% ADVANCE`;
+  }
+
+  if (customerRisk.level === "HIGH") {
+    return `Customer has ${customerHistory?.latePayments ?? 3} late payments and ₹${(customerHistory?.outstandingAmount ?? 18000).toLocaleString("en-IN")} outstanding. Credit is rejected. Policy requires advance payment and human approval before fulfillment. Recommended action: REJECT CREDIT, REQUIRE ADVANCE, REQUIRE HUMAN APPROVAL`;
+  }
+
+  if (order.requestedCredit && !merchantPolicy.allowCredit) {
+    return `Customer requested credit terms. Merchant policy disables credit. Recommended action: REJECT REQUESTED CREDIT TERMS, REQUIRE ${recommendation.recommendedAdvancePercentage}% ADVANCE`;
+  }
+
+  if (customerRisk.level === "LOW" && !isNew) {
+    const ordersCount = customerHistory?.totalOrders ?? customer.previousOrderCount;
+    return `Customer has completed ${ordersCount} previous orders without a late payment. The requested ${recommendation.recommendedAdvancePercentage}% advance satisfies the merchant's ${merchantPolicy.minimumAdvancePercentage}% minimum advance policy. Recommended action: REQUEST ${recommendation.recommendedAdvancePercentage}% ADVANCE`;
+  }
+
+  return `Collect a ${recommendation.recommendedAdvancePercentage}% advance (${formatINR(recommendation.recommendedAdvanceAmount)}) to satisfy merchant payment policy.`;
+}
+
+/**
  * Deterministic Bounded Agent Executor
- * Evaluates state machine rules, merchant policies, and executes or stages actions.
+ * Evaluates state machine rules, customer history, and executes or stages actions.
  */
 async function runDeterministicAgent({
   conversation,
@@ -270,39 +379,46 @@ async function runDeterministicAgent({
   merchantPolicy,
   extraction,
   recommendation,
+  customerRisk,
+  businessReason,
   options,
 }: {
   conversation: ConversationWithDetails;
   order: OrderWithPayments;
   merchantPolicy: MerchantPolicyInput;
   extraction: OrderExtraction;
-  recommendation: PaymentRecommendation;
+  recommendation: PolicyEvaluationResult;
+  customerRisk: { level: string; reasons: string[] };
+  businessReason: string;
   options?: { approvedAction?: string };
 }): Promise<AgentDecision> {
   let chosenAction = recommendation.nextAction;
-  let businessReason = recommendation.reason;
+  let decisionReason = businessReason;
 
   if (order.status === OrderStatus.PAID) {
     chosenAction = "updateOrderStatus";
-    businessReason = `Order is fully paid (₹${order.totalAmount.toLocaleString("en-IN")}). Transition to FULFILLED and dispatch items.`;
+    decisionReason = `Order is fully paid (₹${order.totalAmount.toLocaleString("en-IN")}). Transition to FULFILLED and dispatch items.`;
   } else if (order.status === OrderStatus.PARTIALLY_PAID) {
     chosenAction = "sendPaymentRequest";
     const rem = order.remainingAmount ?? 0;
-    businessReason = `Advance received. Request balance payment of ₹${rem.toLocaleString("en-IN")} on delivery.`;
+    decisionReason = `Advance received. Request balance payment of ₹${rem.toLocaleString("en-IN")} on delivery.`;
   } else if (order.status === OrderStatus.FULFILLED) {
     chosenAction = "getPaymentStatus";
-    businessReason = "Order is fulfilled and completed.";
+    decisionReason = "Order is fulfilled and completed.";
   }
 
-  const contextStr = `${order.quantity}x ${extraction.product} · Total: ₹${order.totalAmount.toLocaleString("en-IN")} · Customer: ${conversation.customer.name} (${conversation.customer.previousOrderCount} past orders)`;
+  const metrics = conversation.customer.metrics;
+  const ltvFormatted = formatINR(metrics?.totalOrderValue ?? order.totalAmount);
+  const contextStr = `${order.quantity}x ${extraction.product} · Total: ₹${order.totalAmount.toLocaleString("en-IN")} · Customer: ${conversation.customer.name} (${customerRisk.level} Risk · ${metrics?.totalOrders ?? conversation.customer.previousOrderCount} orders · ${ltvFormatted} LTV)`;
   const policyStr = `Min Advance: ${merchantPolicy.minimumAdvancePercentage}% · Max Discount: ${merchantPolicy.maximumDiscountPercentage}% · Credit: ${merchantPolicy.allowCredit ? "Allowed" : "Disabled"}`;
   const customerReqStr = extraction.customerRequestSummary || `${order.quantity}x ${extraction.product}`;
 
   // Check if financial action requires human approval
   const isFinancial = chosenAction === "createPaymentLink";
+  const isHighRiskOrHighValue = customerRisk.level === "HIGH" || order.totalAmount >= merchantPolicy.highValueOrderThreshold;
   const requiresApproval =
     isFinancial &&
-    merchantPolicy.requireApprovalForFinancialActions &&
+    (merchantPolicy.requireApprovalForFinancialActions || isHighRiskOrHighValue) &&
     options?.approvedAction !== "createPaymentLink";
 
   if (requiresApproval) {
@@ -311,7 +427,7 @@ async function runDeterministicAgent({
         conversationId: conversation.id,
         type: "recommend",
         title: "AI recommended createPaymentLink",
-        detail: `Waiting for merchant approval: ₹${recommendation.recommendedAdvanceAmount.toLocaleString("en-IN")} (${recommendation.recommendedAdvancePercentage}% advance)`,
+        detail: `Waiting for merchant approval: ₹${recommendation.recommendedAdvanceAmount.toLocaleString("en-IN")} (${recommendation.recommendedAdvancePercentage}% advance · ${customerRisk.level} risk)`,
         occurredAt: new Date(),
       },
     });
@@ -320,7 +436,7 @@ async function runDeterministicAgent({
       customerRequest: customerReqStr,
       context: contextStr,
       policy: policyStr,
-      decision: businessReason,
+      decision: decisionReason,
       action: chosenAction,
       result: `Staged for merchant approval (₹${recommendation.recommendedAdvanceAmount.toLocaleString("en-IN")} link)`,
       requiresApproval: true,
@@ -347,16 +463,17 @@ async function runDeterministicAgent({
   } else if (chosenAction === "createFollowUp") {
     const res = await agentTools.createFollowUp({
       conversationId: conversation.id,
-      note: businessReason,
+      note: decisionReason,
       dueAt: order.deliveryDate || "Next business day",
     });
     toolCallsCount = 1;
     resultStr = res.success ? `Follow-up task scheduled (${res.followUpId})` : `Follow-up failed: ${res.error}`;
   } else if (chosenAction === "sendPaymentRequest") {
     const amount = recommendation.recommendedAdvanceAmount || order.remainingAmount || order.totalAmount;
-    const msg = order.status === OrderStatus.PARTIALLY_PAID
-      ? `Hi ${conversation.customer.name}, your order for ${order.quantity}x ${extraction.product} is ready. Please settle the remaining balance of ₹${(order.remainingAmount ?? 0).toLocaleString("en-IN")} on delivery.`
-      : `Hi ${conversation.customer.name}, please confirm your order by paying the advance of ₹${amount.toLocaleString("en-IN")}. Policy does not permit credit.`;
+    const msg =
+      order.status === OrderStatus.PARTIALLY_PAID
+        ? `Hi ${conversation.customer.name}, your order for ${order.quantity}x ${extraction.product} is ready. Please settle the remaining balance of ₹${(order.remainingAmount ?? 0).toLocaleString("en-IN")} on delivery.`
+        : `Hi ${conversation.customer.name}, please confirm your order by paying the advance of ₹${amount.toLocaleString("en-IN")}. Policy does not permit credit.`;
     const res = await agentTools.sendPaymentRequest({
       orderId: order.id,
       channel: "whatsapp",
@@ -378,7 +495,7 @@ async function runDeterministicAgent({
     customerRequest: customerReqStr,
     context: contextStr,
     policy: policyStr,
-    decision: businessReason,
+    decision: decisionReason,
     action: chosenAction,
     result: resultStr,
     requiresApproval: false,
@@ -397,6 +514,9 @@ async function runOpenAILoop({
   merchantPolicy,
   extraction,
   recommendation,
+  customerContextText,
+  customerRisk,
+  businessReason,
   options,
   maxCalls,
 }: {
@@ -405,34 +525,40 @@ async function runOpenAILoop({
   order: OrderWithPayments;
   merchantPolicy: MerchantPolicyInput;
   extraction: OrderExtraction;
-  recommendation: PaymentRecommendation;
+  recommendation: PolicyEvaluationResult;
+  customerContextText: string;
+  customerRisk: { level: string; reasons: string[] };
+  businessReason: string;
   options?: { approvedAction?: string };
   maxCalls: number;
 }): Promise<AgentDecision> {
   const customer = conversation.customer;
   const systemPrompt = `You are Razorpay Closer's Bounded AI Agent for Indian B2B merchants.
-Your role is to inspect the customer conversation, order structure, and merchant policies, and select exactly the right backend action.
+Your role is to inspect the customer conversation, order structure, customer risk history, and merchant policies, and select exactly the right backend action.
 
 CRITICAL SAFETY & GOVERNANCE RULES:
 1. You may ONLY call the approved typed tools provided to you: createPaymentLink, getPaymentStatus, updateOrderStatus, sendPaymentRequest, createFollowUp, recordAgentAction.
 2. Never hallucinate tools or pass unauthorized fields.
 3. Financial Authority: Payment amounts MUST strictly follow the merchant advance policy (${recommendation.recommendedAdvancePercentage}% advance = ₹${recommendation.recommendedAdvanceAmount}).
-4. Order State Constraints:
-   - NEW / QUALIFIED / QUOTE_CREATED: createPaymentLink, createFollowUp, sendPaymentRequest, updateOrderStatus.
-   - PAYMENT_REQUESTED: getPaymentStatus, createFollowUp, sendPaymentRequest.
-   - PARTIALLY_PAID: sendPaymentRequest, getPaymentStatus, createFollowUp.
-   - PAID: updateOrderStatus (to FULFILLED).
-5. Policy Guardrails:
+4. Policy Guardrails:
    - If customer asks for excessive discount (> ${merchantPolicy.maximumDiscountPercentage}%), call createFollowUp to counter-offer.
    - If customer asks for credit and allowCredit=false, call sendPaymentRequest or createPaymentLink to collect advance.
+   - If customer is HIGH risk, enforce advance collection and human approval.
    - If order is ambiguous or price missing, call createFollowUp.
+
+Customer History & Risk Profile:
+${customerContextText}
 
 Merchant Policy:
 - Minimum Advance: ${merchantPolicy.minimumAdvancePercentage}%
 - Maximum Discount: ${merchantPolicy.maximumDiscountPercentage}%
 - Allow Partial Payment: ${merchantPolicy.allowPartialPayment}
 - Allow Credit: ${merchantPolicy.allowCredit}
+- Maximum Credit Amount: ₹${merchantPolicy.maximumCreditAmount}
+- Maximum Credit Days: ${merchantPolicy.maximumCreditDays} days
+- High Value Order Threshold: ₹${merchantPolicy.highValueOrderThreshold}
 - New Customer Advance Required: ${merchantPolicy.newCustomerRequiresAdvance}
+- High Risk Customer Advance Required: ${merchantPolicy.highRiskCustomerRequiresAdvance}
 - Require Approval For Financial Actions: ${merchantPolicy.requireApprovalForFinancialActions}
 
 Order Context:
@@ -441,8 +567,7 @@ Order Context:
 - Product: ${extraction.product} (${order.quantity} pcs @ ₹${order.unitPrice}/pc)
 - Total Amount: ₹${order.totalAmount}
 - Recommended Advance Amount: ₹${recommendation.recommendedAdvanceAmount} (${recommendation.recommendedAdvancePercentage}%)
-- Remaining Amount: ₹${order.remainingAmount ?? recommendation.remainingAmount}
-- Customer: ${customer.name} (${customer.previousOrderCount} previous orders, ${customer.onTimePaymentRate}% on-time)`;
+- Remaining Amount: ₹${order.remainingAmount ?? recommendation.remainingAmount}`;
 
   const messages: OpenAI.ChatCompletionMessageParam[] = [
     { role: "system", content: systemPrompt },
@@ -487,9 +612,10 @@ Order Context:
 
     // Check if financial action requires human approval
     const isFinancial = functionName === "createPaymentLink";
+    const isHighRiskOrHighValue = customerRisk.level === "HIGH" || order.totalAmount >= merchantPolicy.highValueOrderThreshold;
     const requiresApproval =
       isFinancial &&
-      merchantPolicy.requireApprovalForFinancialActions &&
+      (merchantPolicy.requireApprovalForFinancialActions || isHighRiskOrHighValue) &&
       options?.approvedAction !== "createPaymentLink";
 
     if (requiresApproval) {
@@ -507,7 +633,7 @@ Order Context:
         customerRequest: extraction.customerRequestSummary || `${order.quantity}x ${extraction.product}`,
         context: `${order.quantity}x ${extraction.product} · ₹${order.totalAmount.toLocaleString("en-IN")}`,
         policy: `Min Advance: ${merchantPolicy.minimumAdvancePercentage}%`,
-        decision: recommendation.reason,
+        decision: businessReason,
         action: functionName,
         result: `Staged for merchant approval (₹${recommendation.recommendedAdvanceAmount.toLocaleString("en-IN")})`,
         requiresApproval: true,
@@ -540,7 +666,7 @@ Order Context:
     } else if (functionName === "createFollowUp") {
       executionResult = await agentTools.createFollowUp({
         conversationId: conversation.id,
-        note: (parsedArgs.note as string) || recommendation.reason,
+        note: (parsedArgs.note as string) || businessReason,
         dueAt: (parsedArgs.dueAt as string) || order.deliveryDate || "Next business day",
       });
     } else if (functionName === "getPaymentStatus") {
@@ -578,7 +704,7 @@ Order Context:
     customerRequest: extraction.customerRequestSummary || `${order.quantity}x ${extraction.product}`,
     context: contextStr,
     policy: policyStr,
-    decision: recommendation.reason,
+    decision: businessReason,
     action: lastAction,
     result: lastResult,
     requiresApproval: false,
@@ -600,3 +726,10 @@ export async function analyzeConversationWithAgent(conversationId: string) {
   };
 }
 
+function formatINR(amount: number) {
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(amount);
+}

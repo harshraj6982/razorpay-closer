@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { CheckCircle2, ArrowRight, Loader2, ShieldAlert } from "lucide-react";
+import { CheckCircle2, ArrowRight, Loader2, ShieldAlert, AlertTriangle, ShieldCheck, UserCheck } from "lucide-react";
 import type { DashboardConversation, DashboardData } from "@/lib/db/queries";
 import { approveNextAction } from "@/lib/actions/demo";
 import { formatINR } from "@/lib/utils";
@@ -21,12 +21,11 @@ export function AiDecisionPanel({
     return null;
   }
 
-  const recommendation = order.liveRecommendation;
-  const history =
-    conversation.customer.previousOrderCount > 0
-      ? `${conversation.customer.previousOrderCount} prior orders · ${conversation.customer.onTimePaymentRate}% on-time`
-      : "New customer · 0 prior orders";
+  const customer = conversation.customer;
+  const metrics = customer.metrics;
+  const risk = customer.risk;
 
+  const recommendation = order.liveRecommendation;
   const isPostPaymentState =
     order.status === "PARTIALLY_PAID" ||
     order.status === "PAID" ||
@@ -39,26 +38,36 @@ export function AiDecisionPanel({
   // Determine if approval is needed for financial actions
   const isFinancialAction = nextAction === "createPaymentLink";
   const hasActivePaymentLink = order.payments.some((p) => p.status === "CREATED" || p.status === "PAID");
-  const requiresApproval = isFinancialAction && policy.requireApprovalForFinancialActions && !hasActivePaymentLink;
+  const isHighRiskOrHighValue = (risk?.level === "HIGH") || (order.totalAmount >= policy.highValueOrderThreshold);
+  const requiresApproval =
+    isFinancialAction &&
+    (policy.requireApprovalForFinancialActions || isHighRiskOrHighValue) &&
+    !hasActivePaymentLink;
 
-  // 1. CUSTOMER REQUEST
-  const customerRequestText = order.customerRequestSummary ?? `${order.quantity}x items (${formatINR(order.totalAmount)})`;
+  // 1. CUSTOMER DISPLAY
+  const ltvFormatted = formatINR(metrics.totalOrderValue);
+  const outstandingFormatted = formatINR(metrics.outstandingAmount);
 
-  // 2. CONTEXT
-  const contextText = `${order.quantity} units @ ${formatINR(order.unitPrice)}/unit = ${formatINR(order.totalAmount)} · ${conversation.customer.name} (${history})`;
+  // 2. ORDER DISPLAY
+  const orderDetailsText = `${formatINR(order.totalAmount)} · ${order.quantity} units ${order.requestedAdvancePercentage ? `· ${order.requestedAdvancePercentage}% requested advance` : order.requestedCredit ? "· credit requested" : ""}`;
 
-  // 3. POLICY
-  const policyText = `Min advance: ${policy.minimumAdvancePercentage}% · Max discount: ${policy.maximumDiscountPercentage}% · Credit: ${policy.allowCredit ? "Allowed" : "Disabled"}${policy.requireApprovalForFinancialActions ? " · Financial approval: Required" : ""}`;
+  // 3. POLICY DISPLAY
+  const policyDetailsText = `Min advance: ${policy.minimumAdvancePercentage}% · Max discount: ${policy.maximumDiscountPercentage}% · Credit: ${policy.allowCredit ? `Max ₹${policy.maximumCreditAmount.toLocaleString("en-IN")}, ${policy.maximumCreditDays}d` : "disabled"}`;
 
-  // 4. DECISION
+  // 4. DECISION DISPLAY
   const decisionText = isPostPaymentState
-    ? (order.reason ?? recommendation?.reason ?? "Processing post-payment lifecycle.")
-    : (recommendation?.reason ?? order.reason ?? "Evaluate customer terms against policy.");
+    ? (order.reason ?? recommendation?.reasons?.[0] ?? "Processing post-payment lifecycle.")
+    : (order.reason ?? recommendation?.reasons?.[0] ?? "Evaluate customer terms against merchant policy.");
 
-  // 5. ACTION
-  const actionText = nextAction;
+  // 5. WHY DISPLAY
+  const whyReasons = recommendation?.reasons && recommendation.reasons.length > 0
+    ? recommendation.reasons
+    : [
+        customer.isNew ? "New customer requires minimum advance" : `${customer.name} payment history evaluated`,
+        `Policy requires ${policy.minimumAdvancePercentage}% minimum advance`,
+      ];
 
-  // 6. RESULT
+  // 6. ACTION RESULT
   let resultText = "Ready for execution";
   if (order.status === "FULFILLED") {
     resultText = "Order fulfilled and completed.";
@@ -86,6 +95,13 @@ export function AiDecisionPanel({
     });
   }
 
+  const riskBadgeColor =
+    risk?.level === "LOW"
+      ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+      : risk?.level === "MEDIUM"
+        ? "bg-amber-50 text-amber-700 border-amber-200"
+        : "bg-rose-50 text-rose-700 border-rose-200";
+
   return (
     <section className="rounded-2xl border border-line bg-card p-4 shadow-sm">
       <div className="flex items-center justify-between">
@@ -96,55 +112,86 @@ export function AiDecisionPanel({
           Bounded AI Agent
         </span>
       </div>
-      <h3 className="mt-1 text-sm font-semibold">AI Decision & Policy Analysis</h3>
+      <h3 className="mt-1 text-sm font-semibold">AI Decision & Policy Engine</h3>
 
-      <div className="mt-4 space-y-3 divide-y divide-slate-100 text-xs">
-        {/* BLOCK 1: CUSTOMER REQUEST */}
+      <div className="mt-4 space-y-3.5 divide-y divide-slate-100 text-xs">
+        {/* 1. CUSTOMER */}
         <div className="pt-2 first:pt-0">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer Request</p>
-          <p className="mt-1 text-[13px] font-medium leading-snug text-slate-900">{customerRequestText}</p>
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Customer</p>
+            <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider border ${riskBadgeColor}`}>
+              {risk?.level === "LOW" ? <ShieldCheck className="h-3 w-3" /> : risk?.level === "MEDIUM" ? <UserCheck className="h-3 w-3" /> : <AlertTriangle className="h-3 w-3" />}
+              {risk?.level ?? "LOW"} RISK
+            </span>
+          </div>
+          <p className="mt-1 text-[13px] font-semibold text-slate-900">{customer.name}</p>
+          <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-slate-600">
+            <span>{metrics.totalOrders} previous order{metrics.totalOrders === 1 ? "" : "s"}</span>
+            <span>·</span>
+            <span>{ltvFormatted} lifetime value</span>
+            <span>·</span>
+            <span className={metrics.latePayments > 0 ? "font-semibold text-rose-600" : ""}>{metrics.latePayments} late payment{metrics.latePayments === 1 ? "" : "s"}</span>
+            <span>·</span>
+            <span className={metrics.outstandingAmount > 0 ? "font-semibold text-amber-700" : ""}>{outstandingFormatted} outstanding</span>
+          </div>
         </div>
 
-        {/* BLOCK 2: CONTEXT */}
-        <div className="pt-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Context</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-slate-700">{contextText}</p>
+        {/* 2. ORDER */}
+        <div className="pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Order</p>
+          <p className="mt-1 text-[12px] font-medium text-slate-800">{orderDetailsText}</p>
+          {order.customerRequestSummary ? (
+            <p className="mt-0.5 text-[11px] text-slate-500">{order.customerRequestSummary}</p>
+          ) : null}
         </div>
 
-        {/* BLOCK 3: POLICY */}
-        <div className="pt-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Policy</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-slate-700">{policyText}</p>
+        {/* 3. MERCHANT POLICY */}
+        <div className="pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Merchant Policy</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-slate-700">{policyDetailsText}</p>
         </div>
 
-        {/* BLOCK 4: DECISION */}
-        <div className="pt-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Decision</p>
-          <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-800 bg-slate-50 p-2 rounded-lg border border-slate-200/60">
+        {/* 4. AI DECISION */}
+        <div className="pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">AI Decision</p>
+          <p className="mt-1 text-[12px] font-medium leading-relaxed text-slate-900 bg-slate-50 p-2.5 rounded-lg border border-slate-200/70">
             {decisionText}
           </p>
         </div>
 
-        {/* BLOCK 5: ACTION */}
-        <div className="pt-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Action</p>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="inline-flex items-center rounded-md bg-indigo-50 px-2 py-1 font-mono text-[11px] font-semibold text-indigo-700 border border-indigo-200/60">
-              {actionText}
-            </span>
+        {/* 5. WHY */}
+        <div className="pt-2.5">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Why</p>
+          <ul className="mt-1.5 space-y-1 text-[11px] text-slate-700">
+            {whyReasons.map((reason, idx) => (
+              <li key={idx} className="flex items-start gap-1.5">
+                <span className="text-accent font-bold">✓</span>
+                <span>{reason}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        {/* 6. ACTION */}
+        <div className="pt-2.5">
+          <div className="flex items-center justify-between">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Action</p>
             {requiresApproval ? (
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-amber-700">
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-200">
                 <ShieldAlert className="h-3.5 w-3.5 text-amber-600" />
-                Approval Required
+                Human Approval Required
               </span>
             ) : null}
           </div>
-        </div>
-
-        {/* BLOCK 6: RESULT */}
-        <div className="pt-2">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Result</p>
-          <p className="mt-1 text-[12px] leading-relaxed text-slate-700">{resultText}</p>
+          <div className="mt-1.5 flex items-center gap-2">
+            <span className="inline-flex items-center rounded-md bg-indigo-50 px-2.5 py-1 font-mono text-[11px] font-bold text-indigo-700 border border-indigo-200/60">
+              {nextAction}
+            </span>
+            <span className="text-[11px] text-slate-500 truncate">
+              {isFinancialAction ? `₹${(recommendation?.recommendedAdvanceAmount ?? order.recommendedAdvanceAmount ?? order.totalAmount).toLocaleString("en-IN")}` : ""}
+            </span>
+          </div>
+          <p className="mt-1 text-[11px] text-slate-600">{resultText}</p>
         </div>
       </div>
 
@@ -206,4 +253,3 @@ export function AiDecisionPanel({
     </section>
   );
 }
-

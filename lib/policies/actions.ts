@@ -14,4 +14,5 @@ export async function updateMerchantPolicy(raw: unknown) {
   });
   revalidatePath("/");
   revalidatePath("/dashboard");
+  revalidatePath("/dashboard/settings/policies");
 }

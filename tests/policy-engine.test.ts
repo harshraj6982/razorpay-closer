@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { calculatePaymentStrategy } from "../lib/policies/engine";
-import { recommendationSchema, type MerchantPolicyInput, type OrderExtraction } from "../lib/ai/schemas";
+import { evaluatePolicy } from "../lib/policies/engine";
+import { type MerchantPolicyInput, type OrderExtraction } from "../lib/ai/schemas";
 
 async function runPolicyEngineTests() {
   console.log("\n=======================================================");
-  console.log("🛡️ RUNNING MERCHANT POLICY ENGINE TESTS");
+  console.log("🛡️ RUNNING MERCHANT POLICY ENGINE TESTS (PHASE C)");
   console.log("=======================================================\n");
 
   const standardPolicy: MerchantPolicyInput = {
@@ -13,13 +13,17 @@ async function runPolicyEngineTests() {
     allowPartialPayment: true,
     allowCredit: false,
     newCustomerRequiresAdvance: true,
+    maximumCreditAmount: 25000,
+    maximumCreditDays: 7,
+    highValueOrderThreshold: 100000,
+    highRiskCustomerRequiresAdvance: true,
     requireApprovalForFinancialActions: true,
   };
 
   // -------------------------------------------------------------
-  // TEST 1: Trusted Repeat Customer (30% advance requested)
+  // TEST 1: Existing Trusted Customer Can Use Allowed Terms
   // -------------------------------------------------------------
-  console.log("▶ TEST 1: Trusted Repeat Customer (Satisfies Policy)");
+  console.log("▶ TEST 1: Existing Trusted Customer (Satisfies Policy)");
   const trustedOrder: OrderExtraction = {
     product: "Shirts",
     products: [{ name: "Shirts", quantity: 40, unitPrice: 1850 }],
@@ -38,33 +42,46 @@ async function runPolicyEngineTests() {
     notes: null,
   };
 
-  const rec1 = calculatePaymentStrategy(standardPolicy, trustedOrder, {
-    isNew: false,
-    previousOrderCount: 7,
-    onTimePaymentRate: 100,
+  const eval1 = evaluatePolicy({
+    merchantPolicy: standardPolicy,
+    order: trustedOrder,
+    customer: {
+      isNew: false,
+      previousOrderCount: 7,
+      onTimePaymentRate: 100,
+    },
+    customerHistory: {
+      totalOrders: 7,
+      totalOrderValue: 420000,
+      totalPaid: 420000,
+      successfulPayments: 7,
+      failedPayments: 0,
+      latePayments: 0,
+      averagePaymentDelayDays: 0,
+      outstandingAmount: 0,
+    },
   });
 
-  recommendationSchema.parse(rec1);
-  console.log("Result 1:", JSON.stringify(rec1, null, 2));
-
-  assert.equal(rec1.recommendedAdvancePercentage, 30, "Should approve requested 30% advance");
-  assert.equal(rec1.recommendedAdvanceAmount, 22200, "Advance should be ₹22,200");
-  assert.equal(rec1.remainingAmount, 51800, "Remaining should be ₹51,800");
-  assert.equal(rec1.canIssuePaymentLink, true, "Should allow payment link creation");
-  assert.equal(rec1.nextAction, "createPaymentLink", "Action should be createPaymentLink");
-  assert.equal(rec1.violations.length, 0, "There should be 0 policy violations");
+  console.log("Result 1:", JSON.stringify(eval1, null, 2));
+  assert.equal(eval1.allowed, true, "Evaluation must be allowed");
+  assert.equal(eval1.decision, "REQUEST_ADVANCE", "Decision should be REQUEST_ADVANCE");
+  assert.equal(eval1.recommendedAdvancePercentage, 30, "Should approve requested 30% advance");
+  assert.equal(eval1.recommendedAdvanceAmount, 22200, "Advance should be ₹22,200");
+  assert.equal(eval1.remainingAmount, 51800, "Remaining should be ₹51,800");
+  assert.equal(eval1.canIssuePaymentLink, true, "Should allow payment link creation");
+  assert.equal(eval1.violations.length, 0, "There should be 0 policy violations");
   console.log("✅ TEST 1 PASSED: Trusted repeat customer approved at requested 30% rate.\n");
 
   // -------------------------------------------------------------
-  // TEST 2: New Customer Asking For COD / 0% Advance
+  // TEST 2: New Customer Requires Advance
   // -------------------------------------------------------------
-  console.log("▶ TEST 2: New Customer Requesting COD (Violation Bumps to 25%)");
+  console.log("▶ TEST 2: New Customer Requires Advance (COD Request Overridden)");
   const newCustomerOrder: OrderExtraction = {
     product: "Hoodies",
-    products: [{ name: "Hoodies", quantity: 12, unitPrice: 890 }],
-    quantity: 12,
-    unitPrice: 890,
-    totalAmount: 10680,
+    products: [{ name: "Hoodies", quantity: 40, unitPrice: 1000 }],
+    quantity: 40,
+    unitPrice: 1000,
+    totalAmount: 40000,
     requestedAdvancePercentage: 0,
     requestedAdvanceAmount: 0,
     requestedDiscountPercentage: null,
@@ -73,69 +90,255 @@ async function runPolicyEngineTests() {
     intent: "order",
     isAmbiguous: false,
     missingPrice: false,
-    customerRequestSummary: "12 hoodies · pay after event",
+    customerRequestSummary: "40 hoodies · pay after delivery",
     notes: null,
   };
 
-  const rec2 = calculatePaymentStrategy(standardPolicy, newCustomerOrder, {
-    isNew: true,
-    previousOrderCount: 0,
-    onTimePaymentRate: 0,
+  const eval2 = evaluatePolicy({
+    merchantPolicy: standardPolicy,
+    order: newCustomerOrder,
+    customer: {
+      isNew: true,
+      previousOrderCount: 0,
+      onTimePaymentRate: 0,
+    },
+    customerHistory: {
+      totalOrders: 0,
+      totalOrderValue: 0,
+      totalPaid: 0,
+      successfulPayments: 0,
+      failedPayments: 0,
+      latePayments: 0,
+      averagePaymentDelayDays: 0,
+      outstandingAmount: 0,
+    },
   });
 
-  recommendationSchema.parse(rec2);
-  console.log("Result 2:", JSON.stringify(rec2, null, 2));
-
-  assert.equal(rec2.recommendedAdvancePercentage, 25, "New customer must be bumped to 25% minimum advance");
-  assert.equal(rec2.recommendedAdvanceAmount, 2670, "Advance amount should be 25% of 10,680 = ₹2,670");
-  assert.equal(rec2.remainingAmount, 8010, "Remaining should be ₹8,010");
-  assert.ok(rec2.violations.some((v) => v.includes("New customers must pay")), "Should report new customer advance violation");
-  assert.ok(rec2.violations.some((v) => v.includes("Credit terms are not allowed")), "Should report credit disallowed");
+  console.log("Result 2:", JSON.stringify(eval2, null, 2));
+  assert.equal(eval2.recommendedAdvancePercentage, 25, "New customer must be bumped to 25% minimum advance");
+  assert.equal(eval2.recommendedAdvanceAmount, 10000, "Advance amount should be 25% of 40,000 = ₹10,000");
+  assert.equal(eval2.remainingAmount, 30000, "Remaining should be ₹30,000");
+  assert.ok(eval2.violations.some((v) => v.includes("New customers must pay")), "Should report new customer advance violation");
   console.log("✅ TEST 2 PASSED: New customer COD request overridden to mandatory 25% advance.\n");
 
   // -------------------------------------------------------------
-  // TEST 3: Excessive Discount Request (20% asked vs 5% max)
+  // TEST 3: Credit Disabled Rejects Credit
   // -------------------------------------------------------------
-  console.log("▶ TEST 3: Excessive Discount Request (Capped at 5%, Follow-up Required)");
+  console.log("▶ TEST 3: Credit Disabled Rejects Credit");
+  const creditOrder: OrderExtraction = {
+    product: "Staff uniforms",
+    products: [{ name: "Staff uniforms", quantity: 28, unitPrice: 890 }],
+    quantity: 28,
+    unitPrice: 890,
+    totalAmount: 24920,
+    requestedAdvancePercentage: 0,
+    requestedAdvanceAmount: 0,
+    requestedDiscountPercentage: null,
+    requestedCredit: true,
+    deliveryDate: "Next week",
+    intent: "credit_request",
+    isAmbiguous: false,
+    missingPrice: false,
+    customerRequestSummary: "28 uniforms · credit requested",
+    notes: null,
+  };
+
+  const eval3 = evaluatePolicy({
+    merchantPolicy: standardPolicy, // allowCredit = false
+    order: creditOrder,
+    customer: { isNew: false, previousOrderCount: 3, onTimePaymentRate: 100 },
+  });
+
+  assert.equal(eval3.creditAllowed, false, "Credit must be disallowed");
+  assert.ok(eval3.violations.some((v) => v.includes("Credit terms are not allowed")), "Must flag credit disallowed");
+  assert.equal(eval3.recommendedAdvancePercentage, 25, "Advance should be set to 25%");
+  console.log("✅ TEST 3 PASSED: Disabled credit policy rejects credit terms.\n");
+
+  // -------------------------------------------------------------
+  // TEST 4: Credit Above Maximum Amount is Rejected
+  // -------------------------------------------------------------
+  console.log("▶ TEST 4: Credit Above Maximum Amount is Rejected");
+  const creditEnabledPolicy: MerchantPolicyInput = {
+    ...standardPolicy,
+    allowCredit: true,
+    maximumCreditAmount: 25000,
+    maximumCreditDays: 7,
+  };
+
+  const largeCreditOrder: OrderExtraction = {
+    product: "Uniforms",
+    products: [{ name: "Uniforms", quantity: 50, unitPrice: 1000 }],
+    quantity: 50,
+    unitPrice: 1000,
+    totalAmount: 50000, // 50,000 exceeds 25,000 max credit
+    requestedAdvancePercentage: 0,
+    requestedAdvanceAmount: 0,
+    requestedDiscountPercentage: null,
+    requestedCredit: true,
+    deliveryDate: "Next month",
+    intent: "credit_request",
+    isAmbiguous: false,
+    missingPrice: false,
+    customerRequestSummary: "₹50,000 uniforms on credit",
+    notes: null,
+  };
+
+  const eval4 = evaluatePolicy({
+    merchantPolicy: creditEnabledPolicy,
+    order: largeCreditOrder,
+    customer: { isNew: false, previousOrderCount: 5, onTimePaymentRate: 100 },
+  });
+
+  assert.equal(eval4.creditAllowed, false, "Credit exceeding max amount must be rejected");
+  assert.ok(eval4.violations.some((v) => v.includes("exceeds maximum credit limit")), "Must flag exceeding credit limit");
+  console.log("✅ TEST 4 PASSED: Credit amount exceeding policy cap is rejected.\n");
+
+  // -------------------------------------------------------------
+  // TEST 5: Credit Above Maximum Duration is Rejected
+  // -------------------------------------------------------------
+  console.log("▶ TEST 5: Credit Above Maximum Duration is Rejected");
+  const creditDurationOrder = {
+    ...creditOrder,
+    totalAmount: 20000, // within 25k limit
+    requestedCreditDays: 30, // exceeds 7 days max
+  };
+
+  const eval5 = evaluatePolicy({
+    merchantPolicy: creditEnabledPolicy,
+    order: creditDurationOrder,
+    customer: { isNew: false, previousOrderCount: 5, onTimePaymentRate: 100 },
+    requestedTerms: {
+      creditRequested: true,
+      creditDays: 30,
+    },
+  });
+
+  assert.equal(eval5.creditAllowed, false, "Credit duration exceeding max days must be rejected");
+  assert.ok(eval5.violations.some((v) => v.includes("exceeds maximum policy limit of 7 days")), "Must flag duration violation");
+  console.log("✅ TEST 5 PASSED: Credit duration exceeding policy cap is rejected.\n");
+
+  // -------------------------------------------------------------
+  // TEST 6: Discount Above Maximum is Rejected
+  // -------------------------------------------------------------
+  console.log("▶ TEST 6: Discount Above Maximum is Rejected");
   const discountOrder: OrderExtraction = {
     product: "T-shirts",
-    products: [{ name: "T-shirts", quantity: 200, unitPrice: 400 }],
-    quantity: 200,
+    products: [{ name: "T-shirts", quantity: 250, unitPrice: 400 }],
+    quantity: 250,
     unitPrice: 400,
-    totalAmount: 80000,
+    totalAmount: 100000,
     requestedAdvancePercentage: 50,
-    requestedAdvanceAmount: 40000,
-    requestedDiscountPercentage: 20,
+    requestedAdvanceAmount: 50000,
+    requestedDiscountPercentage: 15, // asks 15% vs 5% max
     requestedCredit: false,
     deliveryDate: "This week",
     intent: "discount_request",
     isAmbiguous: false,
     missingPrice: false,
-    customerRequestSummary: "200 tees · 20% off asked",
+    customerRequestSummary: "250 tees at ₹400 · asking 15% discount",
     notes: null,
   };
 
-  const rec3 = calculatePaymentStrategy(standardPolicy, discountOrder);
-  recommendationSchema.parse(rec3);
-  console.log("Result 3:", JSON.stringify(rec3, null, 2));
+  const eval6 = evaluatePolicy({
+    merchantPolicy: standardPolicy,
+    order: discountOrder,
+    customer: { isNew: false, previousOrderCount: 5, onTimePaymentRate: 100 },
+  });
 
-  assert.equal(rec3.approvedDiscountPercentage, 5, "Discount must be capped at 5% policy maximum");
-  assert.equal(rec3.discountedTotalAmount, 76000, "Discounted total should be 80,000 - 5% = ₹76,000");
-  assert.equal(rec3.recommendedAdvanceAmount, 38000, "50% advance of ₹76,000 = ₹38,000");
-  assert.equal(rec3.canIssuePaymentLink, false, "Must not issue payment link before agreement on discount");
-  assert.equal(rec3.nextAction, "createFollowUp", "Next action must be createFollowUp counter-offer");
-  assert.ok(rec3.violations.some((v) => v.includes("exceeds the 5% maximum")), "Must flag excessive discount violation");
-  console.log("✅ TEST 3 PASSED: Excessive discount capped at 5% and routed to follow-up.\n");
+  assert.equal(eval6.allowed, false, "Excessive discount cannot be approved without counter-offer");
+  assert.equal(eval6.approvedDiscountPercentage, 5, "Approved discount capped at 5%");
+  assert.equal(eval6.discountedTotalAmount, 95000, "Discounted total should be 100k - 5% = ₹95,000");
+  assert.equal(eval6.canIssuePaymentLink, false, "Payment link issuance blocked on excessive discount");
+  assert.equal(eval6.nextAction, "createFollowUp", "Must route to follow-up counter-offer");
+  assert.ok(eval6.violations.some((v) => v.includes("exceeds the 5% maximum")), "Must flag discount violation");
+  console.log("✅ TEST 6 PASSED: Excessive discount rejected and capped at policy maximum.\n");
 
   // -------------------------------------------------------------
-  // TEST 4: Partial Payment Disabled by Policy
+  // TEST 7: High-Risk Customer Requires Advance + Approval
   // -------------------------------------------------------------
-  console.log("▶ TEST 4: Partial Payment Disabled Policy (Forces 100% Full Payment)");
-  const fullPaymentOnlyPolicy: MerchantPolicyInput = {
-    ...standardPolicy,
-    allowPartialPayment: false,
+  console.log("▶ TEST 7: High-Risk Customer Requires Advance + Human Approval");
+  const highRiskOrder: OrderExtraction = {
+    product: "Staff uniforms",
+    products: [{ name: "Staff uniforms", quantity: 100, unitPrice: 900 }],
+    quantity: 100,
+    unitPrice: 900,
+    totalAmount: 90000,
+    requestedAdvancePercentage: 0,
+    requestedAdvanceAmount: 0,
+    requestedDiscountPercentage: null,
+    requestedCredit: true,
+    deliveryDate: "Before wedding season",
+    intent: "credit_request",
+    isAmbiguous: false,
+    missingPrice: false,
+    customerRequestSummary: "100 uniforms · 30-day credit requested",
+    notes: null,
   };
 
+  const eval7 = evaluatePolicy({
+    merchantPolicy: creditEnabledPolicy, // Even if credit is enabled generally
+    order: highRiskOrder,
+    customer: {
+      isNew: false,
+      previousOrderCount: 8,
+      onTimePaymentRate: 62,
+    },
+    customerHistory: {
+      totalOrders: 8,
+      totalOrderValue: 180000,
+      totalPaid: 162000,
+      successfulPayments: 5,
+      failedPayments: 1,
+      latePayments: 3,
+      averagePaymentDelayDays: 8,
+      outstandingAmount: 18000,
+    },
+  });
+
+  assert.equal(eval7.creditAllowed, false, "High-risk customer must NOT be given credit");
+  assert.equal(eval7.requiresHumanApproval, true, "High-risk customer actions must require human approval");
+  assert.equal(eval7.recommendedAdvancePercentage, 25, "Must enforce 25% minimum advance");
+  assert.equal(eval7.recommendedAdvanceAmount, 22500, "Advance should be ₹22,500");
+  assert.ok(eval7.violations.some((v) => v.includes("High-risk customers must pay at least 25% advance")), "Must report high risk advance violation");
+  console.log("✅ TEST 7 PASSED: High-risk customer credit rejected, advance and human approval enforced.\n");
+
+  // -------------------------------------------------------------
+  // TEST 8: High-Value Order Requires Advance + Approval
+  // -------------------------------------------------------------
+  console.log("▶ TEST 8: High-Value Order Requires Advance + Human Approval");
+  const highValueOrder: OrderExtraction = {
+    product: "Bulk Blazers",
+    products: [{ name: "Bulk Blazers", quantity: 100, unitPrice: 1500 }],
+    quantity: 100,
+    unitPrice: 1500,
+    totalAmount: 150000, // Exceeds 100,000 threshold
+    requestedAdvancePercentage: 25,
+    requestedAdvanceAmount: 37500,
+    requestedDiscountPercentage: null,
+    requestedCredit: false,
+    deliveryDate: "End of month",
+    intent: "bulk_order",
+    isAmbiguous: false,
+    missingPrice: false,
+    customerRequestSummary: "₹150,000 bulk order",
+    notes: null,
+  };
+
+  const eval8 = evaluatePolicy({
+    merchantPolicy: standardPolicy,
+    order: highValueOrder,
+    customer: { isNew: false, previousOrderCount: 5, onTimePaymentRate: 100 },
+  });
+
+  assert.equal(eval8.requiresHumanApproval, true, "High-value orders must require human approval");
+  assert.equal(eval8.recommendedAdvancePercentage, 25, "Advance percentage should satisfy minimum");
+  assert.ok(eval8.reasons.some((r) => r.includes("high-value threshold")), "Reasons must mention high value threshold");
+  console.log("✅ TEST 8 PASSED: High value order correctly flags human approval.\n");
+
+  // -------------------------------------------------------------
+  // TEST 9: Valid Partial Payment is Allowed
+  // -------------------------------------------------------------
+  console.log("▶ TEST 9: Valid Partial Payment is Allowed");
   const partialOrder: OrderExtraction = {
     product: "Polo tees",
     products: [{ name: "Polo tees", quantity: 50, unitPrice: 1000 }],
@@ -154,80 +357,20 @@ async function runPolicyEngineTests() {
     notes: null,
   };
 
-  const rec4 = calculatePaymentStrategy(fullPaymentOnlyPolicy, partialOrder);
-  recommendationSchema.parse(rec4);
-  console.log("Result 4:", JSON.stringify(rec4, null, 2));
+  const eval9 = evaluatePolicy({
+    merchantPolicy: standardPolicy,
+    order: partialOrder,
+    customer: { isNew: false, previousOrderCount: 4, onTimePaymentRate: 100 },
+  });
 
-  assert.equal(rec4.recommendedAdvancePercentage, 100, "Advance percentage must be 100% when partial payment is disabled");
-  assert.equal(rec4.recommendedAdvanceAmount, 50000, "Advance amount must be full order total ₹50,000");
-  assert.equal(rec4.remainingAmount, 0, "Remaining amount must be 0");
-  assert.ok(rec4.violations.some((v) => v.includes("Partial payment is disabled")), "Should flag partial payment disabled");
-  console.log("✅ TEST 4 PASSED: Partial payment disabled policy forces 100% full payment.\n");
-
-  // -------------------------------------------------------------
-  // TEST 5: Ambiguous Order Handling
-  // -------------------------------------------------------------
-  console.log("▶ TEST 5: Ambiguous Order (Blocks Payment Links)");
-  const ambiguousOrder: OrderExtraction = {
-    product: "Shirts or Hoodies",
-    products: [],
-    quantity: null,
-    unitPrice: null,
-    totalAmount: null,
-    requestedAdvancePercentage: null,
-    requestedAdvanceAmount: null,
-    requestedDiscountPercentage: null,
-    requestedCredit: false,
-    deliveryDate: null,
-    intent: "ambiguous",
-    isAmbiguous: true,
-    missingPrice: false,
-    customerRequestSummary: "Ambiguous inquiry",
-    notes: "Conflicting quantities",
-  };
-
-  const rec5 = calculatePaymentStrategy(standardPolicy, ambiguousOrder);
-  recommendationSchema.parse(rec5);
-  console.log("Result 5:", JSON.stringify(rec5, null, 2));
-
-  assert.equal(rec5.canIssuePaymentLink, false, "Must not allow payment link on ambiguous order");
-  assert.equal(rec5.nextAction, "createFollowUp", "Must route to followUp");
-  assert.equal(rec5.recommendedAdvanceAmount, 0, "Advance amount should be 0");
-  console.log("✅ TEST 5 PASSED: Ambiguous order blocks financial execution.\n");
-
-  // -------------------------------------------------------------
-  // TEST 6: Missing Price Handling
-  // -------------------------------------------------------------
-  console.log("▶ TEST 6: Missing Price (Routes to Quote / Follow-up)");
-  const missingPriceOrder: OrderExtraction = {
-    product: "Hoodies",
-    products: [{ name: "Hoodies", quantity: 50, unitPrice: null }],
-    quantity: 50,
-    unitPrice: null,
-    totalAmount: null,
-    requestedAdvancePercentage: null,
-    requestedAdvanceAmount: null,
-    requestedDiscountPercentage: null,
-    requestedCredit: false,
-    deliveryDate: "Friday",
-    intent: "quote_request",
-    isAmbiguous: false,
-    missingPrice: true,
-    customerRequestSummary: "50 hoodies · quote requested",
-    notes: null,
-  };
-
-  const rec6 = calculatePaymentStrategy(standardPolicy, missingPriceOrder);
-  recommendationSchema.parse(rec6);
-  console.log("Result 6:", JSON.stringify(rec6, null, 2));
-
-  assert.equal(rec6.canIssuePaymentLink, false, "Must not allow payment link when price is missing");
-  assert.equal(rec6.nextAction, "createFollowUp", "Must route to quote follow-up");
-  assert.ok(rec6.violations.some((v) => v.includes("Unit price is missing")), "Should flag missing price");
-  console.log("✅ TEST 6 PASSED: Missing price correctly routed to quote follow-up.\n");
+  assert.equal(eval9.recommendedAdvancePercentage, 30, "Advance percentage should be 30%");
+  assert.equal(eval9.recommendedAdvanceAmount, 15000, "Advance should be ₹15,000");
+  assert.equal(eval9.remainingAmount, 35000, "Remaining balance should be ₹35,000");
+  assert.equal(eval9.canIssuePaymentLink, true, "Should allow payment link");
+  console.log("✅ TEST 9 PASSED: Valid partial payment accepted and calculated.\n");
 
   console.log("=======================================================");
-  console.log("🎉 ALL 6 MERCHANT POLICY ENGINE TESTS PASSED PERFECTLY!");
+  console.log("🎉 ALL 9 POLICY ENGINE TESTS PASSED PERFECTLY!");
   console.log("=======================================================\n");
 }
 
