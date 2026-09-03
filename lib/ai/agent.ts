@@ -63,7 +63,7 @@ export async function analyzeConversationWithAgent(
       newCustomerRequiresAdvance: merchantPolicy.newCustomerRequiresAdvance,
     },
     {
-      totalAmount: extraction.totalAmount,
+      totalAmount: extraction.totalAmount ?? 0,
       requestedAdvancePercentage: extraction.requestedAdvancePercentage,
       requestedDiscountPercentage: extraction.requestedDiscountPercentage,
       requestedCredit: extraction.requestedCredit,
@@ -73,40 +73,68 @@ export async function analyzeConversationWithAgent(
     },
   );
 
+  // If ambiguous or missing price, override nextAction to createFollowUp
+  let nextAction = recommendation.nextAction;
+  let reason = recommendation.reason;
+  let orderStatus: OrderStatus = OrderStatus.QUOTE_CREATED;
+
+  if (extraction.isAmbiguous) {
+    nextAction = "createFollowUp";
+    reason = "Customer request is ambiguous. Follow-up required to clarify products and quantities.";
+    orderStatus = OrderStatus.QUALIFIED;
+  } else if (extraction.missingPrice) {
+    nextAction = "createFollowUp";
+    reason = "Unit price was not specified by customer. Send catalog pricing quote.";
+    orderStatus = OrderStatus.QUALIFIED;
+  }
+
   // 3. Upsert order in database
   let order = conversation.order;
 
   if (order) {
+    if (order.status === OrderStatus.PAID) {
+      nextAction = "updateOrderStatus";
+      reason = order.reason || `Full payment of ₹${order.totalAmount.toLocaleString("en-IN")} received. Order ready for fulfillment.`;
+    } else if (order.status === OrderStatus.PARTIALLY_PAID) {
+      const remaining = order.remainingAmount ?? 0;
+      nextAction = "sendPaymentRequest";
+      reason = order.reason || `Advance payment received. Next action is to request the remaining ₹${remaining.toLocaleString("en-IN")} against delivery.`;
+    } else if (order.status === OrderStatus.FULFILLED) {
+      nextAction = "getPaymentStatus";
+      reason = "Order has been fulfilled and completed.";
+    }
+
     order = await prisma.order.update({
       where: { id: order.id },
       data: {
+        status: order.status === OrderStatus.NEW ? orderStatus : order.status,
         intent: extraction.intent,
         products: JSON.stringify(extraction.products),
-        quantity: extraction.quantity,
-        unitPrice: extraction.unitPrice,
-        totalAmount: extraction.totalAmount,
+        quantity: extraction.quantity ?? 0,
+        unitPrice: extraction.unitPrice ?? 0,
+        totalAmount: extraction.totalAmount ?? 0,
         requestedAdvancePercentage: extraction.requestedAdvancePercentage,
         recommendedAdvancePercentage: recommendation.recommendedAdvancePercentage,
         recommendedAdvanceAmount: recommendation.recommendedAdvanceAmount,
-        remainingAmount: recommendation.remainingAmount,
+        remainingAmount: order.status === OrderStatus.PARTIALLY_PAID || order.status === OrderStatus.PAID ? order.remainingAmount : recommendation.remainingAmount,
         requestedDiscountPercentage: extraction.requestedDiscountPercentage,
         requestedCredit: extraction.requestedCredit,
         deliveryDate: extraction.deliveryDate,
         customerRequestSummary: extraction.customerRequestSummary,
-        reason: recommendation.reason,
-        nextAction: recommendation.nextAction,
+        reason,
+        nextAction,
       },
     });
   } else {
     order = await prisma.order.create({
       data: {
         conversationId: conversation.id,
-        status: OrderStatus.QUOTE_CREATED,
+        status: orderStatus,
         intent: extraction.intent,
         products: JSON.stringify(extraction.products),
-        quantity: extraction.quantity,
-        unitPrice: extraction.unitPrice,
-        totalAmount: extraction.totalAmount,
+        quantity: extraction.quantity ?? 0,
+        unitPrice: extraction.unitPrice ?? 0,
+        totalAmount: extraction.totalAmount ?? 0,
         requestedAdvancePercentage: extraction.requestedAdvancePercentage,
         recommendedAdvancePercentage: recommendation.recommendedAdvancePercentage,
         recommendedAdvanceAmount: recommendation.recommendedAdvanceAmount,
@@ -115,8 +143,8 @@ export async function analyzeConversationWithAgent(
         requestedCredit: extraction.requestedCredit,
         deliveryDate: extraction.deliveryDate,
         customerRequestSummary: extraction.customerRequestSummary,
-        reason: recommendation.reason,
-        nextAction: recommendation.nextAction,
+        reason,
+        nextAction,
         statusHistory: {
           create: [
             {
@@ -156,8 +184,8 @@ export async function analyzeConversationWithAgent(
       {
         conversationId: conversation.id,
         type: "calc",
-        title: `Order value calculated: ₹${extraction.totalAmount.toLocaleString("en-IN")}`,
-        detail: `${extraction.quantity} × ₹${extraction.unitPrice.toLocaleString("en-IN")}`,
+        title: `Order value calculated: ₹${(extraction.totalAmount ?? 0).toLocaleString("en-IN")}`,
+        detail: `${extraction.quantity ?? 0} × ₹${(extraction.unitPrice ?? 0).toLocaleString("en-IN")}`,
         occurredAt: new Date(),
       },
       {

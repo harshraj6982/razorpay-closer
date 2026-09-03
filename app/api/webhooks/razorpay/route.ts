@@ -21,17 +21,48 @@ export async function POST(req: Request) {
     }
 
     const event = (payload.event as string) || "payment.captured";
-    const paymentEntity = (payload.payload as Record<string, unknown>)?.payment as Record<string, unknown>;
-    const linkEntity = (payload.payload as Record<string, unknown>)?.payment_link as Record<string, unknown>;
+    const payloadContainer = payload.payload as Record<string, unknown> | undefined;
+    const paymentEntity = payloadContainer?.payment as Record<string, unknown> | undefined;
+    const linkEntity = payloadContainer?.payment_link as Record<string, unknown> | undefined;
 
     const paymentLinkObj = linkEntity?.entity as Record<string, unknown> | undefined;
     const paymentObj = paymentEntity?.entity as Record<string, unknown> | undefined;
 
-    const paymentLinkId = (paymentLinkObj?.id || (paymentObj?.notes as Record<string, unknown>)?.payment_link_id) as string | undefined;
-    const paymentId = (paymentObj?.id as string) || `pay_${Date.now()}`;
-    const amountInPaise = (paymentObj?.amount || paymentLinkObj?.amount) as number | undefined;
-    const amount = amountInPaise ? Math.round(amountInPaise / 100) : 0;
-    const orderId = ((paymentObj?.notes as Record<string, unknown>)?.orderId || (paymentLinkObj?.notes as Record<string, unknown>)?.orderId) as string | undefined;
+    const paymentNotes = (paymentObj?.notes as Record<string, unknown> | undefined) ?? {};
+    const linkNotes = (paymentLinkObj?.notes as Record<string, unknown> | undefined) ?? {};
+
+    const paymentLinkId =
+      (paymentLinkObj?.id as string | undefined) ||
+      (paymentNotes.payment_link_id as string | undefined) ||
+      (paymentNotes.paymentLinkId as string | undefined) ||
+      (payload.paymentLinkId as string | undefined) ||
+      (payload.payment_link_id as string | undefined);
+
+    const paymentId =
+      (paymentObj?.id as string | undefined) ||
+      (payload.paymentId as string | undefined) ||
+      (payload.payment_id as string | undefined) ||
+      `pay_${Date.now()}`;
+
+    const rawAmountInPaise =
+      (paymentObj?.amount as number | undefined) ??
+      (paymentLinkObj?.amount_paid as number | undefined) ??
+      (paymentLinkObj?.amount as number | undefined);
+
+    let amount = 0;
+    if (typeof rawAmountInPaise === "number" && rawAmountInPaise > 0) {
+      amount = Math.round(rawAmountInPaise / 100);
+    } else if (typeof payload.amount === "number") {
+      amount = payload.amount;
+    }
+
+    const orderId =
+      (paymentNotes.orderId as string | undefined) ||
+      (paymentNotes.order_id as string | undefined) ||
+      (linkNotes.orderId as string | undefined) ||
+      (linkNotes.order_id as string | undefined) ||
+      (payload.orderId as string | undefined) ||
+      (payload.order_id as string | undefined);
 
     const result = await processPaymentCapture({
       paymentLinkId,

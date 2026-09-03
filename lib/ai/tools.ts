@@ -1,10 +1,11 @@
 import { z } from "zod";
 
 export const createPaymentLinkInput = z.object({
-  orderId: z.string(),
-  amount: z.number().int().positive(),
-  customerName: z.string(),
-  description: z.string(),
+  orderId: z.string().min(1, "orderId is required"),
+  amount: z.number().int("Amount must be an integer").positive("Amount must be positive"),
+  customerName: z.string().optional().default("Customer"),
+  description: z.string().optional().default("Payment link"),
+  callbackUrl: z.string().optional(),
 });
 
 export const getPaymentStatusInput = z.object({
@@ -48,6 +49,10 @@ export type AgentTools = {
   createPaymentLink: (input: z.infer<typeof createPaymentLinkInput>) => Promise<{
     paymentLinkId: string;
     shortUrl: string;
+    paymentId: string;
+    amount: number;
+    orderId: string;
+    status: string;
   }>;
   getPaymentStatus: (input: z.infer<typeof getPaymentStatusInput>) => Promise<{
     status: string;

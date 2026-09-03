@@ -27,8 +27,20 @@ export function AiDecisionPanel({
       ? `${conversation.customer.previousOrderCount} previous orders · ${conversation.customer.onTimePaymentRate}% paid on time`
       : "No prior orders · new customer";
 
-  const nextAction = recommendation?.nextAction ?? order.nextAction ?? "createPaymentLink";
-  const actionLabel = actionCopy(nextAction, recommendation?.recommendedAdvancePercentage ?? order.recommendedAdvancePercentage ?? 25);
+  const isPostPaymentState =
+    order.status === "PARTIALLY_PAID" ||
+    order.status === "PAID" ||
+    order.status === "FULFILLED";
+
+  const nextAction = isPostPaymentState
+    ? (order.nextAction ?? "createPaymentLink")
+    : (recommendation?.nextAction ?? order.nextAction ?? "createPaymentLink");
+
+  const actionLabel = actionCopy(
+    nextAction,
+    recommendation?.recommendedAdvancePercentage ?? order.recommendedAdvancePercentage ?? 25,
+    order.status,
+  );
 
   function handleApprove() {
     setFeedback(null);
@@ -71,11 +83,11 @@ export function AiDecisionPanel({
       <div className="mt-4 rounded-xl bg-slate-50 px-3 py-3">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Reason</p>
         <p className="mt-1 text-[13px] leading-5 text-slate-700">
-          {recommendation?.reason ?? order.reason}
+          {isPostPaymentState ? (order.reason ?? recommendation?.reason) : (recommendation?.reason ?? order.reason)}
         </p>
       </div>
 
-      {recommendation && recommendation.violations.length > 0 ? (
+      {!isPostPaymentState && recommendation && recommendation.violations.length > 0 ? (
         <ul className="mt-3 space-y-1.5">
           {recommendation.violations.map((violation) => (
             <li
@@ -97,7 +109,7 @@ export function AiDecisionPanel({
 
       <button
         type="button"
-        disabled={isPending}
+        disabled={isPending || order.status === "FULFILLED"}
         onClick={handleApprove}
         className="mt-4 flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-slate-900 text-sm font-medium text-white hover:bg-slate-800 active:scale-[0.99] disabled:opacity-50 transition-all cursor-pointer"
       >
@@ -105,6 +117,11 @@ export function AiDecisionPanel({
           <>
             <Loader2 className="h-4 w-4 animate-spin" />
             Executing action…
+          </>
+        ) : order.status === "FULFILLED" ? (
+          <>
+            <CheckCircle2 className="h-4 w-4 text-emerald-400" />
+            Order Completed & Fulfilled
           </>
         ) : (
           <>
@@ -129,9 +146,10 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function actionCopy(action: string, advance: number) {
+function actionCopy(action: string, advance: number, orderStatus?: string) {
+  if (orderStatus === "FULFILLED" || action === "getPaymentStatus") return "Order fulfilled & settled";
   if (action === "createFollowUp") return "Counter-offer within discount policy";
-  if (action === "sendPaymentRequest") return `Request ${advance}% advance (no credit)`;
+  if (action === "sendPaymentRequest") return orderStatus === "PARTIALLY_PAID" ? "Request remaining balance" : `Request ${advance}% advance (no credit)`;
   if (action === "updateOrderStatus") return "Fulfill & complete order";
   return `Request ${advance}% advance`;
 }

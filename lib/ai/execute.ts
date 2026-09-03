@@ -123,6 +123,10 @@ async function createPaymentLink(raw: unknown) {
   return {
     paymentLinkId: link.paymentLinkId,
     shortUrl: link.shortUrl,
+    paymentId: payment.id,
+    amount: payment.amount,
+    orderId: order.id,
+    status: payment.status,
   };
 }
 
@@ -169,7 +173,11 @@ async function updateOrderStatus(raw: unknown) {
 
   await prisma.order.update({
     where: { id: order.id },
-    data: { status: toStatus },
+    data: {
+      status: toStatus,
+      nextAction: toStatus === OrderStatus.FULFILLED ? "getPaymentStatus" : order.nextAction,
+      reason: toStatus === OrderStatus.FULFILLED ? "Order fulfilled and completed." : order.reason,
+    },
   });
 
   await prisma.orderStatusEvent.create({

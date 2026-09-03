@@ -22,8 +22,19 @@ function getRazorpayClient(): Razorpay | null {
   const key_id = process.env.RAZORPAY_KEY_ID?.trim();
   const key_secret = process.env.RAZORPAY_KEY_SECRET?.trim();
 
-  if (key_id && key_secret) {
-    return new Razorpay({ key_id, key_secret });
+  // Validate that credentials exist and are not placeholder dummies
+  if (
+    key_id &&
+    key_secret &&
+    key_id.startsWith("rzp_") &&
+    !key_id.includes("placeholder") &&
+    !key_secret.includes("placeholder")
+  ) {
+    try {
+      return new Razorpay({ key_id, key_secret });
+    } catch {
+      return null;
+    }
   }
   return null;
 }
@@ -31,12 +42,20 @@ function getRazorpayClient(): Razorpay | null {
 export async function createRazorpayPaymentLink(
   params: CreatePaymentLinkParams,
 ): Promise<RazorpayLinkResult> {
+  // 1. Accept validated amount
+  if (!params.amount || params.amount <= 0 || !Number.isFinite(params.amount)) {
+    throw new Error(
+      `Invalid payment amount: ${params.amount}. Amount must be a positive number in INR.`,
+    );
+  }
+
   const client = getRazorpayClient();
 
+  // 2. If live/test Razorpay API credentials exist, create Razorpay Payment Link
   if (client) {
     try {
       const response = await client.paymentLink.create({
-        amount: Math.round(params.amount * 100), // in paise
+        amount: Math.round(params.amount * 100), // convert INR to paise
         currency: "INR",
         accept_partial: false,
         description: params.description,
@@ -56,19 +75,22 @@ export async function createRazorpayPaymentLink(
         callback_method: "get",
       });
 
-      return {
-        paymentLinkId: response.id,
-        shortUrl: response.short_url,
-        amount: params.amount,
-        status: response.status,
-        isMock: false,
-      };
+      if (response && response.id && response.short_url) {
+        return {
+          paymentLinkId: response.id,
+          shortUrl: response.short_url,
+          amount: params.amount,
+          status: response.status || "created",
+          isMock: false,
+        };
+      }
     } catch (error) {
-      console.warn("Razorpay API call failed, falling back to test simulation link:", error);
+      const msg = error instanceof Error ? error.message : String(error);
+      console.warn(`Razorpay API offline or unreachable (${msg}), using test simulation link.`);
     }
   }
 
-  // Realistic test simulation payment link (works offline and without live API credentials)
+  // 3. Realistic Test Mode simulation payment link (offline-safe & test-ready)
   const randomSuffix = Math.random().toString(36).substring(2, 9);
   const paymentLinkId = `plink_test_${randomSuffix}`;
   const shortUrl = `/pay/${paymentLinkId}`;
@@ -87,11 +109,20 @@ export function verifyWebhookSignature(
   signature: string,
   secret?: string,
 ): boolean {
-  const webhookSecret = secret || process.env.RAZORPAY_WEBHOOK_SECRET?.trim();
+  if (!signature) {
+    return false;
+  }
 
-  // If running in development/demo without a webhook secret configured, allow test verification
+  const webhookSecret = (secret !== undefined ? secret : process.env.RAZORPAY_WEBHOOK_SECRET)?.trim();
+
+  // If running in development/demo without a webhook secret configured, allow test verification with test_signature
   if (!webhookSecret) {
-    return signature === "test_signature" || process.env.NODE_ENV !== "production";
+    return signature === "test_signature";
+  }
+
+  // Allow explicit test_signature bypass in non-production for local simulation
+  if (signature === "test_signature" && process.env.NODE_ENV !== "production") {
+    return true;
   }
 
   try {
@@ -99,6 +130,10 @@ export function verifyWebhookSignature(
       .createHmac("sha256", webhookSecret)
       .update(rawBody)
       .digest("hex");
+
+    if (expectedSignature.length !== signature.length) {
+      return false;
+    }
 
     return crypto.timingSafeEqual(
       Buffer.from(expectedSignature, "utf8"),
