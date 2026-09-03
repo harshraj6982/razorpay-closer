@@ -1,36 +1,39 @@
+import { unstable_cache } from "next/cache";
 import { evaluatePolicy } from "@/lib/policies/engine";
 import { calculateCustomerRisk } from "@/lib/policies/risk";
 import { prisma } from "@/lib/db/client";
 
-export async function getDashboardData() {
-  const merchant = await prisma.merchant.findFirst({
+async function fetchDashboardData() {
+  const merchant = await prisma.merchant.findUnique({
     where: { id: "merchant_stitchline" },
-    include: { policy: true },
+    include: {
+      policy: true,
+      conversations: {
+        orderBy: { lastMessageAt: "desc" },
+        include: {
+          customer: {
+            include: {
+              metrics: true,
+            },
+          },
+          messages: { orderBy: { sentAt: "asc" } },
+          activities: { orderBy: { occurredAt: "asc" } },
+          order: {
+            include: {
+              payments: { orderBy: { createdAt: "asc" } },
+              statusHistory: { orderBy: { recordedAt: "asc" } },
+            },
+          },
+        },
+      },
+    },
   });
 
   if (!merchant || !merchant.policy) {
     return null;
   }
 
-  const conversations = await prisma.conversation.findMany({
-    where: { merchantId: merchant.id },
-    orderBy: { lastMessageAt: "desc" },
-    include: {
-      customer: {
-        include: {
-          metrics: true,
-        },
-      },
-      messages: { orderBy: { sentAt: "asc" } },
-      activities: { orderBy: { occurredAt: "asc" } },
-      order: {
-        include: {
-          payments: { orderBy: { createdAt: "asc" } },
-          statusHistory: { orderBy: { recordedAt: "asc" } },
-        },
-      },
-    },
-  });
+  const conversations = merchant.conversations;
 
   const policy = {
     minimumAdvancePercentage: merchant.policy.minimumAdvancePercentage,
@@ -186,6 +189,12 @@ export async function getDashboardData() {
     }),
   };
 }
+
+export const getDashboardData = unstable_cache(
+  fetchDashboardData,
+  ["dashboard-data-cache"],
+  { tags: ["dashboard-data"], revalidate: 30 },
+);
 
 export type DashboardData = NonNullable<Awaited<ReturnType<typeof getDashboardData>>>;
 export type DashboardConversation = DashboardData["conversations"][number];

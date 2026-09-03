@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { agentTools } from "@/lib/ai/execute";
 import { analyzeConversationWithAgent } from "@/lib/ai/agent";
@@ -57,6 +57,7 @@ export async function approveNextAction(conversationId: string) {
     throw new Error(`Unsupported action: ${action}`);
   }
 
+  updateTag("dashboard-data");
   revalidatePath("/");
   revalidatePath("/dashboard");
   return { success: true, action, result: toolResult };
@@ -87,6 +88,7 @@ export async function simulatePaymentWebhook(paymentLinkId: string, amount?: num
     event: "payment.captured",
   });
 
+  updateTag("dashboard-data");
   revalidatePath("/");
   revalidatePath("/dashboard");
   return { success: true, ...result };
@@ -116,12 +118,14 @@ export async function addCustomerMessage(conversationId: string, body: string) {
   // Automatically trigger AI analysis to update order and policy recommendation
   await analyzeConversationWithAgent(conversationId);
 
+  updateTag("dashboard-data");
   revalidatePath("/");
   revalidatePath("/dashboard");
 }
 
 export async function runAiAnalysis(conversationId: string) {
   const result = await analyzeConversationWithAgent(conversationId);
+  updateTag("dashboard-data");
   revalidatePath("/");
   revalidatePath("/dashboard");
   return result;
@@ -129,6 +133,7 @@ export async function runAiAnalysis(conversationId: string) {
 
 export async function resetDemoData() {
   await seedDatabase();
+  updateTag("dashboard-data");
   revalidatePath("/");
   revalidatePath("/dashboard");
   return { success: true };

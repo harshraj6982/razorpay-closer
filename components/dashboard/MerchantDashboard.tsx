@@ -95,6 +95,7 @@ export function MerchantDashboard({ data }: { data: DashboardData }) {
           {/* AI Evaluation Engine Link */}
           <Link
             href="/dashboard/evaluation"
+            prefetch={true}
             className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200/90 bg-gradient-to-r from-indigo-50/80 to-blue-50/80 px-2.5 text-xs font-semibold text-indigo-700 hover:from-indigo-100/80 hover:to-blue-100/80 transition-all shadow-2xs"
           >
             <BarChart3 className="h-3.5 w-3.5 text-indigo-600" />

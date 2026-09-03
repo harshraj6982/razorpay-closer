@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, updateTag } from "next/cache";
 import { prisma } from "@/lib/db/client";
 import { runEvaluation } from "@/lib/evaluation/runner";
 import type { FullEvaluationRunOutput } from "@/lib/evaluation/types";
@@ -11,6 +11,7 @@ export async function triggerEvaluationAction(): Promise<FullEvaluationRunOutput
     includeBaseline: true,
   });
 
+  updateTag("evaluation-data");
   revalidatePath("/dashboard/evaluation");
   return runOutput;
 }

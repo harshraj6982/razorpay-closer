@@ -1,3 +1,4 @@
+import { unstable_cache } from "next/cache";
 import { runEvaluation } from "@/lib/evaluation/runner";
 import { prisma } from "@/lib/db/client";
 import { EvaluationDashboardClient } from "@/components/evaluation/EvaluationDashboardClient";
@@ -12,16 +13,16 @@ import type {
 
 export const dynamic = "force-dynamic";
 
-export default async function EvaluationDashboardPage() {
-  // Check if there is an existing persisted evaluation run
-  const latestRun = await prisma.evaluationRun.findFirst({
-    orderBy: { createdAt: "desc" },
-    include: {
-      results: {
-        orderBy: { scenarioId: "asc" },
+const getLatestEvaluationData = unstable_cache(
+  async (): Promise<FullEvaluationRunOutput> => {
+    const latestRun = await prisma.evaluationRun.findFirst({
+      orderBy: { createdAt: "desc" },
+      include: {
+        results: {
+          orderBy: { scenarioId: "asc" },
+        },
       },
-    },
-  });
+    });
 
   let initialData: FullEvaluationRunOutput;
 
@@ -101,5 +102,13 @@ export default async function EvaluationDashboardPage() {
     });
   }
 
+  return initialData;
+},
+["evaluation-data-cache"],
+{ tags: ["evaluation-data"], revalidate: 60 },
+);
+
+export default async function EvaluationDashboardPage() {
+  const initialData = await getLatestEvaluationData();
   return <EvaluationDashboardClient initialData={initialData} />;
 }
