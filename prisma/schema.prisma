@@ -3,8 +3,9 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 enum OrderStatus {
@@ -151,6 +152,8 @@ model OrderStatusEvent {
   toStatus   OrderStatus
   reason     String
   recordedAt DateTime     @default(now())
+
+  @@index([orderId])
 }
 
 model Payment {
@@ -164,6 +167,10 @@ model Payment {
   razorpayPaymentId      String?
   createdAt              DateTime      @default(now())
   paidAt                 DateTime?
+
+  @@index([orderId])
+  @@index([razorpayPaymentLinkId])
+  @@index([razorpayPaymentId])
 }
 
 model ActivityEvent {
@@ -189,6 +196,9 @@ model AgentActionLog {
   decisionId     String?
   success        Boolean  @default(true)
   createdAt      DateTime @default(now())
+
+  @@index([orderId])
+  @@index([conversationId])
 }
 
 model PolicyAuditLog {
@@ -202,6 +212,9 @@ model PolicyAuditLog {
   violations     String   @default("[]")
   allowed        Boolean  @default(true)
   createdAt      DateTime @default(now())
+
+  @@index([orderId])
+  @@index([customerId])
 }
 
 model EvaluationRun {

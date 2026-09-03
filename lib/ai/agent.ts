@@ -273,7 +273,8 @@ export async function runBoundedAgent(
       });
       toolCallsExecuted = decision.toolCallsCount;
     } catch (err) {
-      console.warn("OpenAI agent loop failed, falling back to deterministic agent runner:", err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`OpenAI agent loop failed (${errorMsg}), falling back to deterministic agent runner.`);
       decision = await runDeterministicAgent({
         conversation,
         order,

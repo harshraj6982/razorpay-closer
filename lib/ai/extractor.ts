@@ -85,7 +85,8 @@ Customer Context:
         return extractionSchema.parse(parsed);
       }
     } catch (err) {
-      console.warn("OpenAI structured output failed, using deterministic extractor:", err);
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      console.warn(`OpenAI structured output failed (${errorMsg}), using deterministic extractor.`);
     }
   }
 

@@ -115,12 +115,15 @@ export function verifyWebhookSignature(
 
   const webhookSecret = (secret !== undefined ? secret : process.env.RAZORPAY_WEBHOOK_SECRET)?.trim();
 
-  // If running in development/demo without a webhook secret configured, allow test verification with test_signature
+  // In production, an unconfigured secret must strictly fail verification
   if (!webhookSecret) {
+    if (process.env.NODE_ENV === "production") {
+      return false;
+    }
     return signature === "test_signature";
   }
 
-  // Allow explicit test_signature bypass in non-production for local simulation
+  // Allow explicit test_signature bypass only in non-production for local simulation
   if (signature === "test_signature" && process.env.NODE_ENV !== "production") {
     return true;
   }

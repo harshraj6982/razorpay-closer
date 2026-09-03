@@ -1,16 +1,19 @@
 @import "tailwindcss";
 
 :root {
-  --background: #f4f6fb;
+  --background: #f8fafc;
   --foreground: #0f172a;
   --card: #ffffff;
   --muted: #64748b;
   --line: #e2e8f0;
-  --accent: #2563eb;
-  --accent-soft: #eff6ff;
-  --success: #059669;
-  --warning: #d97706;
-  --danger: #dc2626;
+  --accent: #0c83fd;
+  --accent-soft: #eef6ff;
+  --razorpay-navy: #0c2340;
+  --razorpay-blue: #0c83fd;
+  --razorpay-blue-dark: #0052cc;
+  --success: #10b981;
+  --warning: #f59e0b;
+  --danger: #ef4444;
 }
 
 @theme inline {
@@ -21,10 +24,13 @@
   --color-line: var(--line);
   --color-accent: var(--accent);
   --color-accent-soft: var(--accent-soft);
+  --color-razorpay-navy: var(--razorpay-navy);
+  --color-razorpay-blue: var(--razorpay-blue);
+  --color-razorpay-blue-dark: var(--razorpay-blue-dark);
   --color-success: var(--success);
   --color-warning: var(--warning);
   --color-danger: var(--danger);
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -41,8 +47,29 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 .tabular {
   font-variant-numeric: tabular-nums;
+}
+
+/* Polished thin scrollbar for dashboard panels */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
 }

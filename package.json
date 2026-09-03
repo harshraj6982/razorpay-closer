@@ -17,6 +17,8 @@
     "test:evaluation": "tsx tests/evaluation-engine.test.ts",
     "evaluate": "tsx scripts/evaluate.ts",
     "evaluate:baseline": "tsx scripts/evaluate.ts --baseline",
+    "verify": "tsx scripts/verify-all.ts",
+    "test:all": "npm test && tsx scripts/verify-all.ts",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
     "db:seed": "prisma db seed",

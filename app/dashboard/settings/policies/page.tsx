@@ -3,6 +3,8 @@ import { ArrowLeft, Shield } from "lucide-react";
 import { getDashboardData } from "@/lib/db/queries";
 import { PolicySettings } from "@/components/settings/PolicySettings";
 
+export const dynamic = "force-dynamic";
+
 export default async function PolicySettingsPage() {
   const data = await getDashboardData();
 

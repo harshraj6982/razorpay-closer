@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { CheckCircle2, CreditCard, ShieldCheck } from "lucide-react";
+import { CheckCircle2, CreditCard, ShieldCheck, AlertCircle } from "lucide-react";
 import { simulatePaymentWebhook } from "@/lib/actions/demo";
 import { formatINR } from "@/lib/utils";
 
@@ -16,16 +16,18 @@ export function PaymentCheckoutClient({
   isPaid: boolean;
 }) {
   const [isPaid, setIsPaid] = useState(initialPaid);
+  const [error, setError] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [method, setMethod] = useState<"upi" | "card">("upi");
 
   function handlePay() {
+    setError(null);
     startTransition(async () => {
       try {
         await simulatePaymentWebhook(linkId, amount);
         setIsPaid(true);
       } catch (err) {
-        alert(err instanceof Error ? err.message : "Payment simulation failed");
+        setError(err instanceof Error ? err.message : "Payment simulation failed");
       }
     });
   }
@@ -73,6 +75,13 @@ export function PaymentCheckoutClient({
           </button>
         </div>
       </div>
+
+      {error ? (
+        <div className="flex items-center gap-2 rounded-xl bg-rose-50 p-3 text-xs font-medium text-rose-800 border border-rose-200">
+          <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
+          <span>{error}</span>
+        </div>
+      ) : null}
 
       <button
         type="button"

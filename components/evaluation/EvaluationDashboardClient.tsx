@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { FullEvaluationRunOutput, GradedScenarioResult } from "@/lib/evaluation/types";
 import { triggerEvaluationAction } from "@/lib/actions/evaluation";
+import { RazorpayLogo } from "@/components/brand/RazorpayLogo";
 import { ScenarioInspectorModal } from "./ScenarioInspectorModal";
 
 export function EvaluationDashboardClient({
@@ -66,22 +67,18 @@ export function EvaluationDashboardClient({
         <div className="flex items-center gap-3">
           <Link
             href="/dashboard"
-            className="inline-flex h-8 items-center gap-1 rounded-lg border border-slate-200 px-2.5 text-xs font-medium text-slate-600 hover:bg-slate-50 transition-colors"
+            className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
           >
             <ArrowLeft className="h-3.5 w-3.5" />
             <span>Dashboard</span>
           </Link>
-          <div className="h-4 w-px bg-slate-200" />
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-sm font-bold tracking-tight">AI Evaluation Engine</h1>
-              <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] font-bold text-indigo-700 border border-indigo-200">
-                Phase D
-              </span>
-            </div>
-            <p className="text-[10px] text-slate-500">
-              Deterministic ground-truth benchmark across {metrics.totalScenarios} synthetic transactions
-            </p>
+          <div className="h-5 w-px bg-slate-200" />
+          <RazorpayLogo productName="Closer" badge="EVAL ENGINE" size="sm" />
+          <div className="hidden sm:block">
+            <span className="text-xs text-slate-400">|</span>
+            <span className="ml-2 text-xs font-medium text-slate-500">
+              Deterministic benchmark across {metrics.totalScenarios} test transactions
+            </span>
           </div>
         </div>
 
