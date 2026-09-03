@@ -92,7 +92,7 @@ cp .env.example .env
 
 Edit `.env` as needed:
 ```env
-DATABASE_URL="file:./dev.db"
+DATABASE_URL=""
 RAZORPAY_KEY_ID=""
 RAZORPAY_KEY_SECRET=""
 RAZORPAY_WEBHOOK_SECRET=""
