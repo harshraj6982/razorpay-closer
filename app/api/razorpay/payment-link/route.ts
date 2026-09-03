@@ -21,7 +21,7 @@ export async function POST(req: Request) {
       description: data.description || `Payment for order ${data.orderId}`,
     });
 
-    return NextResponse.json({ success: true, ...result });
+    return NextResponse.json(result);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Internal Server Error";
     return NextResponse.json({ error: message }, { status: 400 });

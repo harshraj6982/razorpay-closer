@@ -21,7 +21,7 @@ export type MessageContext = {
 function getOpenAIClient(): OpenAI | null {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
   if (apiKey && apiKey.startsWith("sk-")) {
-    return new OpenAI({ apiKey });
+    return new OpenAI({ apiKey, timeout: 2000, maxRetries: 0 });
   }
   return null;
 }

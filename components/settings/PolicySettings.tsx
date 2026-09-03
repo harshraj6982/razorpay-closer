@@ -76,6 +76,13 @@ export function PolicySettings({
             setForm((current) => ({ ...current, newCustomerRequiresAdvance }))
           }
         />
+        <Toggle
+          label="Require human approval for financial actions"
+          checked={form.requireApprovalForFinancialActions}
+          onChange={(requireApprovalForFinancialActions) =>
+            setForm((current) => ({ ...current, requireApprovalForFinancialActions }))
+          }
+        />
       </div>
 
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
@@ -84,7 +91,7 @@ export function PolicySettings({
         {pending ? "Saving…" : "Save policy"}
       </Button>
       <p className="mt-2 text-[11px] leading-4 text-muted">
-        Recommendations on the right rail recompute from this policy. The AI agent is not live yet.
+        AI decisions and guardrails recompute authoritatively from this policy.
       </p>
     </section>
   );

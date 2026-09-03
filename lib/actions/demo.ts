@@ -10,7 +10,7 @@ import { seedDatabase } from "@/prisma/seed";
 export async function approveNextAction(conversationId: string) {
   const conversation = await prisma.conversation.findUnique({
     where: { id: conversationId },
-    include: { order: true, customer: true },
+    include: { order: true, customer: true, merchant: { include: { policy: true } } },
   });
 
   if (!conversation || !conversation.order) {
@@ -18,31 +18,37 @@ export async function approveNextAction(conversationId: string) {
   }
 
   const order = conversation.order;
-  const action = order.nextAction;
+  const action = order.nextAction || "createPaymentLink";
+
+  let toolResult: unknown;
 
   if (action === "createPaymentLink") {
     const amount = order.recommendedAdvanceAmount || order.totalAmount;
-    await agentTools.createPaymentLink({
+    const res = await agentTools.createPaymentLink({
       orderId: order.id,
       amount,
       customerName: conversation.customer.name,
       description: `${order.quantity}x items - Advance Payment`,
     });
+    if (!res.success) {
+      throw new Error(res.error || "Failed to create payment link");
+    }
+    toolResult = res;
   } else if (action === "createFollowUp") {
-    await agentTools.createFollowUp({
+    toolResult = await agentTools.createFollowUp({
       conversationId: conversation.id,
       note: order.reason || "Counter-offer within merchant policy",
       dueAt: order.deliveryDate || "Next business day",
     });
   } else if (action === "sendPaymentRequest") {
     const amount = order.recommendedAdvanceAmount || order.remainingAmount || order.totalAmount;
-    await agentTools.sendPaymentRequest({
+    toolResult = await agentTools.sendPaymentRequest({
       orderId: order.id,
       channel: "whatsapp",
       message: `Payment request: Please confirm advance of ₹${amount.toLocaleString("en-IN")}. Policy requires advance and does not permit credit.`,
     });
   } else if (action === "updateOrderStatus") {
-    await agentTools.updateOrderStatus({
+    toolResult = await agentTools.updateOrderStatus({
       orderId: order.id,
       toStatus: "FULFILLED",
       reason: "Order fully paid and dispatched for fulfillment",
@@ -53,7 +59,7 @@ export async function approveNextAction(conversationId: string) {
 
   revalidatePath("/");
   revalidatePath("/dashboard");
-  return { success: true, action };
+  return { success: true, action, result: toolResult };
 }
 
 export async function simulatePaymentWebhook(paymentLinkId: string, amount?: number) {

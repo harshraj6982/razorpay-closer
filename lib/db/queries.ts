@@ -33,6 +33,7 @@ export async function getDashboardData() {
     allowPartialPayment: merchant.policy.allowPartialPayment,
     allowCredit: merchant.policy.allowCredit,
     newCustomerRequiresAdvance: merchant.policy.newCustomerRequiresAdvance,
+    requireApprovalForFinancialActions: merchant.policy.requireApprovalForFinancialActions,
   };
 
   return {

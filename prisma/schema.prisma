@@ -49,6 +49,7 @@ model MerchantPolicy {
   allowPartialPayment         Boolean  @default(true)
   allowCredit                 Boolean  @default(false)
   newCustomerRequiresAdvance  Boolean  @default(true)
+  requireApprovalForFinancialActions Boolean @default(true)
   updatedAt                   DateTime @updatedAt
 }
 
@@ -153,10 +154,14 @@ model ActivityEvent {
 }
 
 model AgentActionLog {
-  id         String   @id @default(cuid())
-  action     String
-  payload    String
-  result     String?
-  success    Boolean  @default(true)
-  createdAt  DateTime @default(now())
+  id             String   @id @default(cuid())
+  conversationId String?
+  orderId        String?
+  action         String
+  payload        String
+  result         String?
+  reason         String?
+  decisionId     String?
+  success        Boolean  @default(true)
+  createdAt      DateTime @default(now())
 }

@@ -13,6 +13,7 @@ async function runPolicyEngineTests() {
     allowPartialPayment: true,
     allowCredit: false,
     newCustomerRequiresAdvance: true,
+    requireApprovalForFinancialActions: true,
   };
 
   // -------------------------------------------------------------

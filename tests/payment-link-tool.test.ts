@@ -82,15 +82,16 @@ async function runPaymentLinkToolTests() {
   console.log("Payment Link Created:", JSON.stringify(result, null, 2));
 
   // 2a. Validate returned attributes
-  assert.ok(result.paymentLinkId.startsWith("plink_"), `Payment link ID must start with plink_, got ${result.paymentLinkId}`);
-  assert.ok(result.shortUrl.includes(result.paymentLinkId) || result.shortUrl.startsWith("http"), "shortUrl must be valid URL");
+  assert.equal(result.success, true, "Creation must succeed");
+  assert.ok(result.paymentLinkId && result.paymentLinkId.startsWith("plink_"), `Payment link ID must start with plink_, got ${result.paymentLinkId}`);
+  assert.ok(result.shortUrl && (result.shortUrl.includes(result.paymentLinkId!) || result.shortUrl.startsWith("http")), "shortUrl must be valid URL");
   assert.equal(result.amount, validatedAmount, `Amount must equal ${validatedAmount}`);
   assert.equal(result.orderId, orderId, `orderId must equal ${orderId}`);
   assert.equal(result.status, "CREATED", "Initial payment status must be CREATED");
 
   // 2b. Database verification: Payment record stored and linked to internal order
   const storedPayment = await prisma.payment.findFirst({
-    where: { razorpayPaymentLinkId: result.paymentLinkId },
+    where: { razorpayPaymentLinkId: result.paymentLinkId! },
   });
 
   assert.ok(storedPayment, "Payment record must exist in database");
@@ -121,7 +122,7 @@ async function runPaymentLinkToolTests() {
     where: { conversationId: conversation.id, role: "AGENT" },
     orderBy: { sentAt: "desc" },
   });
-  assert.ok(message && message.body.includes(result.shortUrl), "Conversation must contain agent message with payment link URL");
+  assert.ok(message && result.shortUrl && message.body.includes(result.shortUrl), "Conversation must contain agent message with payment link URL");
 
   console.log("✅ TEST 2 PASSED: Payment link created, stored in DB, and associated with internal order.\n");
 

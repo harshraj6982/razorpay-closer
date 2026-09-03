@@ -6,6 +6,7 @@ export const merchantPolicySchema = z.object({
   allowPartialPayment: z.boolean(),
   allowCredit: z.boolean(),
   newCustomerRequiresAdvance: z.boolean(),
+  requireApprovalForFinancialActions: z.boolean().default(true),
 });
 
 export type MerchantPolicyInput = z.infer<typeof merchantPolicySchema>;
@@ -65,3 +66,17 @@ export const recommendationSchema = z.object({
 });
 
 export type PaymentRecommendation = z.infer<typeof recommendationSchema>;
+
+export const agentDecisionSchema = z.object({
+  customerRequest: z.string(),
+  context: z.string(),
+  policy: z.string(),
+  decision: z.string(),
+  action: z.string(),
+  result: z.string(),
+  requiresApproval: z.boolean().default(false),
+  approved: z.boolean().default(false),
+  toolCallsCount: z.number().int().default(0),
+});
+
+export type AgentDecision = z.infer<typeof agentDecisionSchema>;

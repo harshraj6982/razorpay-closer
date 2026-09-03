@@ -37,6 +37,7 @@ export async function seedDatabase() {
           allowPartialPayment: true,
           allowCredit: false,
           newCustomerRequiresAdvance: true,
+          requireApprovalForFinancialActions: true,
         },
       },
     },
