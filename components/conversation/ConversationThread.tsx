@@ -14,7 +14,14 @@ import {
 } from "lucide-react";
 import type { DashboardConversation } from "@/lib/db/queries";
 import { statusLabel } from "@/lib/orders/state";
-import { cn, formatINR, formatTime, initials } from "@/lib/utils";
+import {
+  cn,
+  formatINR,
+  formatTime,
+  initials,
+  getPaymentCheckoutUrl,
+  getPaymentAbsoluteUrl,
+} from "@/lib/utils";
 import { addCustomerMessage, runAiAnalysis } from "@/lib/actions/demo";
 import { RazorpayIcon } from "@/components/brand/RazorpayLogo";
 
@@ -65,7 +72,12 @@ export function ConversationThread({
   }
 
   function copyPaymentLink(url: string) {
-    navigator.clipboard.writeText(url);
+    const fullUrl = getPaymentAbsoluteUrl(
+      url,
+      activePayment?.razorpayPaymentLinkId,
+      activePayment?.id,
+    );
+    navigator.clipboard.writeText(fullUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2000);
   }
@@ -257,11 +269,11 @@ export function ConversationThread({
                             </button>
 
                             <Link
-                              href={
-                                activePayment.razorpayPaymentLinkUrl.startsWith("http")
-                                  ? activePayment.razorpayPaymentLinkUrl
-                                  : `/pay/${activePayment.razorpayPaymentLinkUrl.replace(/^\/pay\//, "")}`
-                              }
+                              href={getPaymentCheckoutUrl(
+                                activePayment.razorpayPaymentLinkUrl,
+                                activePayment.razorpayPaymentLinkId,
+                                activePayment.id,
+                              )}
                               target="_blank"
                               className="inline-flex items-center gap-1 rounded-md bg-[#0C83FD] px-2.5 py-1 text-xs font-bold text-white hover:bg-[#0066ee] shadow-2xs"
                             >

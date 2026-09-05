@@ -5,7 +5,13 @@ import Link from "next/link";
 import { ExternalLink, Copy, Check, Zap, CheckCircle2, Clock, AlertCircle } from "lucide-react";
 import type { DashboardConversation } from "@/lib/db/queries";
 import { statusLabel } from "@/lib/orders/state";
-import { formatINR, formatTime } from "@/lib/utils";
+import {
+  formatINR,
+  formatTime,
+  getPaymentCheckoutUrl,
+  getPaymentDisplayUrl,
+  getPaymentAbsoluteUrl,
+} from "@/lib/utils";
 import { simulatePaymentWebhook } from "@/lib/actions/demo";
 import { RazorpayIcon } from "@/components/brand/RazorpayLogo";
 
@@ -33,8 +39,9 @@ export function PaymentStatus({ conversation }: { conversation: DashboardConvers
 
   const percentage = Math.min(100, Math.round((collected / order.totalAmount) * 100));
 
-  function copyLink(url: string, id: string) {
-    navigator.clipboard.writeText(url);
+  function copyLink(url: string, id: string, linkId?: string | null) {
+    const fullUrl = getPaymentAbsoluteUrl(url, linkId, id);
+    navigator.clipboard.writeText(fullUrl);
     setCopied(id);
     setTimeout(() => setCopied(null), 2000);
   }
@@ -58,30 +65,27 @@ export function PaymentStatus({ conversation }: { conversation: DashboardConvers
           <RazorpayIcon size={18} />
           <h3 className="text-sm font-bold text-[#0C2340]">Razorpay Payment Hub</h3>
         </div>
-        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-700 border border-slate-200">
+        <span className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-semibold text-slate-600">
           {statusLabel(order.status)}
         </span>
       </div>
 
       {simError ? (
-        <div className="mt-2.5 flex items-center gap-2 rounded-lg bg-rose-50 px-3 py-2 text-xs font-medium text-rose-800 border border-rose-200">
+        <div className="mt-3 flex items-center gap-2 rounded-xl bg-rose-50 p-2.5 text-xs font-medium text-rose-800 border border-rose-200">
           <AlertCircle className="h-4 w-4 shrink-0 text-rose-600" />
           <span>{simError}</span>
         </div>
       ) : null}
 
-      {/* Progress Bar & Amount Summary */}
-      <div className="mt-3 rounded-xl bg-slate-50/80 p-3 border border-slate-200/60">
-        <div className="flex items-baseline justify-between text-xs">
-          <span className="font-semibold text-slate-700">
-            Collected <span className="text-emerald-700 font-bold">{formatINR(collected)}</span> of{" "}
-            {formatINR(order.totalAmount)}
-          </span>
-          <span className="text-[11px] font-bold text-slate-500 tabular">{percentage}%</span>
+      {/* Payment Progress Bar */}
+      <div className="mt-4 space-y-1.5">
+        <div className="flex justify-between text-xs text-slate-500">
+          <span>Collected: {formatINR(collected)}</span>
+          <span className="font-semibold text-slate-700">{percentage}%</span>
         </div>
-        <div className="mt-2 h-2 overflow-hidden rounded-full bg-slate-200">
+        <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
           <div
-            className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+            className="h-full bg-emerald-500 transition-all duration-500"
             style={{ width: `${percentage}%` }}
           />
         </div>
@@ -98,7 +102,16 @@ export function PaymentStatus({ conversation }: { conversation: DashboardConvers
         <ul className="mt-3 space-y-2.5">
           {order.payments.map((payment) => {
             const isUnpaid = payment.status !== "PAID";
-            const linkUrl = payment.razorpayPaymentLinkUrl;
+            const checkoutUrl = getPaymentCheckoutUrl(
+              payment.razorpayPaymentLinkUrl,
+              payment.razorpayPaymentLinkId,
+              payment.id,
+            );
+            const displayUrl = getPaymentDisplayUrl(
+              payment.razorpayPaymentLinkUrl,
+              payment.razorpayPaymentLinkId,
+              payment.id,
+            );
             const tone = PAYMENT_TONE[payment.status] ?? {
               bg: "bg-slate-100",
               text: "text-slate-600",
@@ -139,15 +152,24 @@ export function PaymentStatus({ conversation }: { conversation: DashboardConvers
                   </span>
                 </div>
 
-                {linkUrl ? (
+                {checkoutUrl && checkoutUrl !== "#" ? (
                   <div className="flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] gap-2">
-                    <span className="truncate font-mono text-slate-500 max-w-[170px] bg-slate-50 px-2 py-0.5 rounded border border-slate-200/50 text-[10px]">
-                      {linkUrl}
+                    <span
+                      className="truncate font-mono text-slate-500 max-w-[170px] bg-slate-50 px-2 py-0.5 rounded border border-slate-200/50 text-[10px]"
+                      title={displayUrl}
+                    >
+                      {displayUrl}
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => copyLink(linkUrl, payment.id)}
+                        onClick={() =>
+                          copyLink(
+                            payment.razorpayPaymentLinkUrl ?? checkoutUrl,
+                            payment.id,
+                            payment.razorpayPaymentLinkId,
+                          )
+                        }
                         className="inline-flex items-center gap-1 rounded-md bg-white px-2 py-1 text-slate-700 border border-slate-200 hover:bg-slate-50 shadow-2xs cursor-pointer text-xs"
                         title="Copy link"
                       >
@@ -160,11 +182,7 @@ export function PaymentStatus({ conversation }: { conversation: DashboardConvers
                       </button>
 
                       <Link
-                        href={
-                          linkUrl.startsWith("http")
-                            ? linkUrl
-                            : `/pay/${linkUrl.replace(/^\/pay\//, "")}`
-                        }
+                        href={checkoutUrl}
                         target="_blank"
                         className="inline-flex items-center gap-1 rounded-md bg-[#0C83FD] px-2.5 py-1 text-white font-bold hover:bg-[#0066ee] shadow-2xs text-xs"
                         title="Open checkout"

@@ -37,3 +37,66 @@ export function initials(name: string) {
     .map((part) => part[0]?.toUpperCase() ?? "")
     .join("");
 }
+
+export function getPaymentCheckoutUrl(
+  url?: string | null,
+  linkId?: string | null,
+  paymentId?: string | null,
+): string {
+  if (!url && !linkId && !paymentId) return "#";
+
+  const isDemoUrl =
+    url === "https://rzp.io/i/demo-partial" ||
+    (typeof url === "string" &&
+      (url.includes("demo-partial") ||
+        url.includes("rzp.io/i/demo") ||
+        url.includes("placeholder")));
+
+  if (isDemoUrl) {
+    const id =
+      linkId ||
+      (url?.includes("demo-partial") ? "plink_demo_partial_1" : null) ||
+      paymentId ||
+      "plink_demo_partial_1";
+    return `/pay/${id.replace(/^\/pay\//, "")}`;
+  }
+
+  if (url?.startsWith("/")) {
+    return url;
+  }
+
+  if (url?.startsWith("http://") || url?.startsWith("https://")) {
+    return url;
+  }
+
+  const target = linkId || paymentId || url || "plink_demo_partial_1";
+  return `/pay/${target.replace(/^\/pay\//, "")}`;
+}
+
+export function getPaymentDisplayUrl(
+  url?: string | null,
+  linkId?: string | null,
+  paymentId?: string | null,
+): string {
+  const checkoutUrl = getPaymentCheckoutUrl(url, linkId, paymentId);
+  return checkoutUrl;
+}
+
+export function getPaymentAbsoluteUrl(
+  url?: string | null,
+  linkId?: string | null,
+  paymentId?: string | null,
+): string {
+  const checkoutUrl = getPaymentCheckoutUrl(url, linkId, paymentId);
+  if (
+    checkoutUrl.startsWith("http://") ||
+    checkoutUrl.startsWith("https://") ||
+    checkoutUrl === "#"
+  ) {
+    return checkoutUrl;
+  }
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}${checkoutUrl.startsWith("/") ? "" : "/"}${checkoutUrl}`;
+  }
+  return checkoutUrl;
+}

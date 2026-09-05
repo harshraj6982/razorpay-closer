@@ -69,6 +69,14 @@ export async function simulatePaymentWebhook(paymentLinkId: string, amount?: num
       OR: [
         { razorpayPaymentLinkId: paymentLinkId },
         { id: paymentLinkId },
+        { razorpayPaymentLinkUrl: { contains: paymentLinkId } },
+        ...(paymentLinkId === "demo-partial" || paymentLinkId === "plink_demo_partial_1"
+          ? [
+              { razorpayPaymentLinkId: "plink_demo_partial_1" },
+              { razorpayPaymentLinkUrl: "https://rzp.io/i/demo-partial" },
+              { razorpayPaymentLinkUrl: "/pay/plink_demo_partial_1" },
+            ]
+          : []),
       ],
     },
   });

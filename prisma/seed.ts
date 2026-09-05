@@ -637,7 +637,7 @@ async function seedPartial(merchantId: string, customerId: string) {
                 amount: 15000,
                 status: PaymentStatus.PAID,
                 razorpayPaymentLinkId: "plink_demo_partial_1",
-                razorpayPaymentLinkUrl: "https://rzp.io/i/demo-partial",
+                razorpayPaymentLinkUrl: "/pay/plink_demo_partial_1",
                 razorpayPaymentId: "pay_demo_partial_1",
                 paidAt: ist(10, 48),
               },

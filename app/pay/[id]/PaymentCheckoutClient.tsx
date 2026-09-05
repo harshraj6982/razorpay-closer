@@ -40,6 +40,13 @@ export function PaymentCheckoutClient({
         <p className="mt-1 text-xs text-emerald-700">
           ₹{amount.toLocaleString("en-IN")} was successfully processed. Webhook verified and order state updated.
         </p>
+        <button
+          type="button"
+          onClick={() => setIsPaid(false)}
+          className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-emerald-300 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 hover:bg-emerald-50 transition-colors cursor-pointer shadow-2xs"
+        >
+          Test Checkout Simulation Again
+        </button>
       </div>
     );
   }

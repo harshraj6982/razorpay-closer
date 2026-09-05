@@ -18,6 +18,14 @@ export default async function PayPage({
       OR: [
         { razorpayPaymentLinkId: id },
         { id: id },
+        { razorpayPaymentLinkUrl: { contains: id } },
+        ...(id === "demo-partial" || id === "demo" || id === "plink_demo_partial_1"
+          ? [
+              { razorpayPaymentLinkId: "plink_demo_partial_1" },
+              { razorpayPaymentLinkUrl: "https://rzp.io/i/demo-partial" },
+              { razorpayPaymentLinkUrl: "/pay/plink_demo_partial_1" },
+            ]
+          : []),
       ],
     },
     include: {

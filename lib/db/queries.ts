@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { evaluatePolicy } from "@/lib/policies/engine";
 import { calculateCustomerRisk } from "@/lib/policies/risk";
 import { prisma } from "@/lib/db/client";
+import { getPaymentCheckoutUrl } from "@/lib/utils";
 
 async function fetchDashboardData() {
   const merchant = await prisma.merchant.findUnique({
@@ -172,7 +173,12 @@ async function fetchDashboardData() {
                 id: payment.id,
                 amount: payment.amount,
                 status: payment.status,
-                razorpayPaymentLinkUrl: payment.razorpayPaymentLinkUrl,
+                razorpayPaymentLinkId: payment.razorpayPaymentLinkId,
+                razorpayPaymentLinkUrl: getPaymentCheckoutUrl(
+                  payment.razorpayPaymentLinkUrl,
+                  payment.razorpayPaymentLinkId,
+                  payment.id,
+                ),
                 paidAt: payment.paidAt?.toISOString() ?? null,
               })),
               statusHistory: order.statusHistory.map((event) => ({
